@@ -29,6 +29,13 @@
       inherit inputs;
       prefix = "nix/";
 
+      # nix-systems/default, without x86_64-darwin: nixpkgs dropped it in 26.11.
+      systems = [
+        "aarch64-darwin"
+        "aarch64-linux"
+        "x86_64-linux"
+      ];
+
       # Overlays applied to nixpkgs.
       nixpkgs.overlays = [
         inputs.devshell.overlays.default
