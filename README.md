@@ -10,5 +10,5 @@ The development environment is a Nix flake built with
 
 ```sh
 nix develop   # enter the development shell
-nix fmt .     # format the Nix code
+nix fmt       # format every file
 ```

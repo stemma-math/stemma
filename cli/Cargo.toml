@@ -1,10 +1,9 @@
 [package]
 name = "stemma"
-description = "The Stemma command line"
 version.workspace = true
 edition.workspace = true
+description = "The Stemma command line"
 license.workspace = true
-authors.workspace = true
 
 [[bin]]
 name = "stemma"

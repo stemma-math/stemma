@@ -41,6 +41,10 @@ in
         help = "Version control";
       }
       {
+        package = pkgs.just;
+        help = "Run the repository's recipes; type 'just' to list them";
+      }
+      {
         package = pkgs.cargo;
         help = "Build, test and run the command line";
       }

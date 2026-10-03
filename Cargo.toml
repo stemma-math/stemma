@@ -6,4 +6,3 @@ members = ["cli"]
 version = "0.0.0"
 edition = "2024"
 license = "MIT"
-authors = ["Enric Cosme Llópez", "Mario Vago Marzal"]
