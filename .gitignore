@@ -1,0 +1,3 @@
+# Symlinks to Nix build outputs.
+result
+result-*
