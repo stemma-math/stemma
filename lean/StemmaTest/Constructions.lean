@@ -1,5 +1,6 @@
 import StemmaTest.Even
 import StemmaTest.Environments
+import StemmaTest.Machinery
 
 open Verso.Genre Manual InlineLean Stemma
 

@@ -14,3 +14,8 @@ name = "Stemma"
 name = "StemmaTest"
 # Verso warns about Lean lines longer than 60 columns, for narrow screens.
 leanOptions = { weak.verso.code.warnLineLength = 0 }
+
+[[lean_exe]]
+name = "stemma-extract"
+root = "StemmaExtract"
+supportInterpreter = true

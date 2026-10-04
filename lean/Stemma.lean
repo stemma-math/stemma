@@ -4,6 +4,9 @@ import Stemma.Environment.Obligations
 import Stemma.Environment.Directive
 import Stemma.Environment.Builtin
 import Stemma.Status
+import Stemma.Sha256
+import Stemma.Fingerprint
+import Stemma.Extract
 
 /-!
 # Stemma

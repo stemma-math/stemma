@@ -26,8 +26,9 @@ run *ARGS:
 [group('development')]
 test:
     cargo test
-    cd lean && lake build StemmaTest
+    cd lean && lake build StemmaTest stemma-extract
     lean/tests/check-failures.sh
+    lean/tests/check-extract.sh
 
 # Run every check: formatting, Clippy, the tests and the Lean build.
 [group('development')]
