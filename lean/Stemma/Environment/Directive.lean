@@ -137,12 +137,15 @@ def isUserDecl (env : Environment) (n : Name) : Bool :=
   !n.isInternal && !generatedName && !generatedKind && !isAuxRecursor env n &&
     !isNoConfusion env n && !isMatcherCore env n && !(env.isProjectionFn n)
 
-/-- The source of every block but Lean code: an environment's prose. -/
-def proseOf (contents : TSyntaxArray `block) : DocElabM String := do
+/--
+The source of an environment's blocks: those of Lean code when `lean` is true,
+and the others, its prose, when it is false.
+-/
+def sourceOf (contents : TSyntaxArray `block) (lean : Bool) : DocElabM String := do
   let text ← getFileMap
   let mut parts := #[]
   for b in contents do
-    if b.raw.getKind == ``Lean.Doc.Syntax.codeblock then continue
+    if (b.raw.getKind == ``Lean.Doc.Syntax.codeblock) != lean then continue
     if let (some s, some e) := (b.raw.getPos?, b.raw.getTailPos?) then
       parts := parts.push (String.Pos.Raw.extract text.source s e).trimAscii.toString
   return "\n\n".intercalate parts.toList
@@ -217,7 +220,8 @@ def expandEnvironment (name : Name) (display : String) (base : BaseKind) (marks 
     name, display, base, decls, line
     label := marks.label, central := marks.central, cited := marks.cited
     title := marks.title, of := marks.of
-    prose := ← proseOf contents
+    prose := ← sourceOf contents (lean := false)
+    lean := ← sourceOf contents (lean := true)
     module := env.mainModule
   })
   let blocks ← if lean.isEmpty then pure prose else

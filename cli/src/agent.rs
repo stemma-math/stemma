@@ -155,7 +155,7 @@ fn prepare_codex() -> Vec<String> {
 
 /// The person's handle: their GitHub login when `gh` knows it, otherwise
 /// their git name, simplified.
-fn person() -> String {
+pub fn person() -> String {
     let gh = Command::new("gh")
         .args(["api", "user", "--jq", ".login"])
         .output();

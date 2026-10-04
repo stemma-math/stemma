@@ -49,6 +49,8 @@ structure EnvRecord where
   decls : Array Name
   /-- Its prose: the source of every block but Lean code. -/
   prose : String
+  /-- The source of its Lean blocks. -/
+  lean : String
   module : Name
   line : Nat
   deriving Inhabited, Repr, ToJson, FromJson

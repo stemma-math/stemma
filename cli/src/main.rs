@@ -6,6 +6,7 @@ mod config;
 mod lake;
 mod library;
 mod report;
+mod sign;
 mod site;
 mod templates;
 
@@ -74,6 +75,14 @@ enum Commands {
         /// The port to serve on (or the next free one).
         #[arg(long, default_value_t = 8000)]
         port: u16,
+    },
+    /// Sign central environments, in your own terminal.
+    Sign {
+        /// Sign only these labels.
+        labels: Vec<String>,
+        /// Write the signature files without committing them.
+        #[arg(long)]
+        no_commit: bool,
     },
     /// Start Claude Code, equipped to work in the library.
     Claude(AgentArgs),
@@ -148,6 +157,7 @@ fn main() -> ExitCode {
         Commands::Check => commands::check(cli.json),
         Commands::Status => commands::status(cli.json),
         Commands::Preview { no_serve, port } => site::preview(!no_serve, port, cli.json),
+        Commands::Sign { labels, no_commit } => sign::sign(labels, !no_commit),
         Commands::Claude(args) => start(agent::Agent::Claude, args),
         Commands::Codex(args) => start(agent::Agent::Codex, args),
     };

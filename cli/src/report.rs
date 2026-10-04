@@ -43,6 +43,7 @@ pub struct Record {
     pub of: Option<String>,
     pub decls: Vec<String>,
     pub prose: String,
+    pub lean: String,
     pub module: String,
     pub line: u32,
 }
