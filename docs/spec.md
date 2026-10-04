@@ -337,7 +337,7 @@ but to make sure that neither an agent's shortcut nor a person's offhand
 
 - A signer runs `stemma sign` in their own terminal. It shows what awaits a
   signature, grouped by cause: for each environment, its prose, its Lean
-  statement, its read-back (below) and what changed since its last signature.
+  statement and what changed since its last signature.
   The signer confirms each group explicitly.
 - `stemma sign` writes the files in `signatures/` and makes a commit signed
   with the signer's SSH or GPG key, which goes into the pull request.
@@ -350,6 +350,23 @@ but to make sure that neither an agent's shortcut nor a person's offhand
      member with the `signer` role.
 - Agents prepare signatures but never make them: when a pull request needs
   signatures, the agent tells the person which ones, and why.
+
+### Read-backs
+
+A read-back is a voluntary aid to auditing, not part of signing.
+
+- It is a translation of an environment's Lean into prose, made blind: by a
+  fresh agent session that `stemma` starts with only the formal side (the
+  statement as Lean prints it, and the definitions in its closure), never the
+  environment's prose. It also points out Mathlib conventions that change the
+  meaning (truncated subtraction, `x / 0 = 0`, junk values).
+- A person asks for read-backs whenever they want: of everything new, of one
+  environment, of a whole module.
+- They are read in a local web page that sets each environment's prose beside
+  its read-back. The page only shows them: the person decides whether they
+  agree, and acts through the conversation.
+- Read-backs are kept in `.stemma/`. They are not committed, and no signature
+  requires one.
 
 ## 4. Collaboration
 
@@ -454,8 +471,7 @@ The first forge Stemma supports is GitHub:
 
 ## Open questions
 
-1. **Signatures.** The read-back that comes with a signature, and the format
-   of `signatures/<label>.toml`.
+1. **Signatures.** The format of `signatures/<label>.toml`.
 2. **Private work.** Whether a person can keep modules private within the
    group, and where they live.
 3. **Readings** (`readings/`). Their format, how they cite the
