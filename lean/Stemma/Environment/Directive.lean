@@ -59,24 +59,60 @@ structure Marks where
   cited : Option String := none
   of : Option String := none
 
-block_extension Block.environment (display base : String) (label title : Option String) where
-  data := toJson (display, base, label, title)
+/-- The style of environments on the site. -/
+def environmentCss : String := r#"
+.stemma-env { margin: 1.2em 0; }
+.stemma-env-heading { margin-bottom: 0.3em; }
+.stemma-statement > p, .stemma-statement > ul, .stemma-statement > ol { font-style: italic; }
+.stemma-statement > .stemma-env-heading { font-style: normal; }
+.stemma-proof > p:last-of-type::after { content: "∎"; float: right; }
+.stemma-proof-of { font-size: 0.85em; color: var(--verso-text-color, #555); opacity: 0.7; }
+.stemma-formalization { margin-top: 0.5em; border-left: 3px solid #d0d7de; padding-left: 0.8em; }
+.stemma-formalization > summary { cursor: pointer; font-size: 0.85em; opacity: 0.7; }
+"#
+
+block_extension Block.environment (display base : String) (number : Option Nat)
+    (label title of : Option String) where
+  data := toJson (display, base, number, label, title, of)
+  extraCss := [environmentCss]
   traverse _ _ _ := pure none
   toTeX := some fun _ goB _ _ content => content.mapM goB
   toHtml :=
     open Verso.Output.Html in
     some fun _ goB _ data content => do
-      let .ok ((display, base, label, title) : String × String × Option String × Option String) :=
+      let .ok ((display, base, number, label, title, of) :
+          String × String × Option Nat × Option String × Option String × Option String) :=
           fromJson? data
         | pure .empty
+      let name := match number with
+        | some n => s!"{display} {n}"
+        | none => display
+      let name : Verso.Output.Html :=
+        if base == "proof" then {{<em>{{name}}</em>}} else {{<strong>{{name}}</strong>}}
       let heading : Verso.Output.Html := match title with
-        | some t => {{<strong>{{display}}</strong>" (" {{t}} ")."}}
-        | none => {{<strong>{{display}}</strong>"."}}
+        | some t => {{{{name}}" (" {{t}} ")."}}
+        | none => {{{{name}}"."}}
+      let ofLink : Verso.Output.Html := match of with
+        | some target => {{" "<a class="stemma-proof-of" href={{s!"#{target}"}}>{{s!"of {target}"}}</a>}}
+        | none => .empty
       pure {{
         <div class={{s!"stemma-env stemma-{base}"}} id={{label.getD ""}}>
-          <p class="stemma-env-heading">{{heading}}</p>
+          <p class="stemma-env-heading">{{heading}}{{ofLink}}</p>
           {{← content.mapM goB}}
         </div>
+      }}
+
+block_extension Block.formalization where
+  traverse _ _ _ := pure none
+  toTeX := some fun _ goB _ _ content => content.mapM goB
+  toHtml :=
+    open Verso.Output.Html in
+    some fun _ goB _ _ content => do
+      pure {{
+        <details class="stemma-formalization">
+          <summary>"Lean"</summary>
+          {{← content.mapM goB}}
+        </details>
       }}
 
 /-- Labels are lowercase letters, digits, `-` and `.`, starting with a letter or digit. -/
@@ -159,7 +195,14 @@ def expandEnvironment (name : Name) (display : String) (base : BaseKind) (marks 
   let ref ← getRef
   checkMarks base marks
   let before := (← getEnv).constants.map₂
-  let blocks ← contents.mapM elabBlock
+  let numbered := (recordExt.getState (← getEnv)).filter (·.base != .proof) |>.size
+  let number := if base == .proof then none else some (numbered + 1)
+  let mut prose := #[]
+  let mut lean := #[]
+  for b in contents do
+    let term ← elabBlock b
+    if b.raw.getKind == ``Lean.Doc.Syntax.codeblock then lean := lean.push term
+    else prose := prose.push term
   let env ← getEnv
   let mut added := #[]
   for (n, _) in env.constants.map₂.toList do
@@ -177,9 +220,11 @@ def expandEnvironment (name : Name) (display : String) (base : BaseKind) (marks 
     prose := ← proseOf contents
     module := env.mainModule
   })
+  let blocks ← if lean.isEmpty then pure prose else
+    pure <| prose.push (← ``(Verso.Doc.Block.other Block.formalization #[$lean,*]))
   ``(Verso.Doc.Block.other
-      (Block.environment $(quote display) $(quote base.toString) $(quote marks.label)
-        $(quote marks.title))
+      (Block.environment $(quote display) $(quote base.toString) $(quote number)
+        $(quote marks.label) $(quote marks.title) $(quote marks.of))
       #[$blocks,*])
 
 /-- Expands a definition or a statement. -/

@@ -7,6 +7,7 @@ import Stemma.Status
 import Stemma.Sha256
 import Stemma.Fingerprint
 import Stemma.Extract
+import Stemma.Site
 
 /-!
 # Stemma

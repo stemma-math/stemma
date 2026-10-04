@@ -37,6 +37,10 @@ const TEMPLATES: &[(&str, &str)] = &[
         "module/lean.lean",
         include_str!("../templates/module/lean.lean.jinja"),
     ),
+    (
+        "site/StemmaSite.lean",
+        include_str!("../templates/site/StemmaSite.lean.jinja"),
+    ),
 ];
 
 /// Renders the template `name` with `context`.

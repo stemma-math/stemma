@@ -1,0 +1,10 @@
+-- Written by `stemma preview`: the program that builds the site of {{ name }}.
+import Stemma.Site
+import {{ name }}
+
+open Verso.Genre.Manual
+
+def main (args : List String) : IO UInt32 :=
+  manualMain (options := args) <| Stemma.book
+    {% if root_document %}(%doc {{ name }}){% else %}(Stemma.titlePage {{ title | tojson }}){% endif %}
+    #[{% for m in documents %}{% if not loop.first %}, {% endif %}%doc {{ m }}{% endfor %}]

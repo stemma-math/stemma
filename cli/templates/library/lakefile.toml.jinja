@@ -21,3 +21,10 @@ rev = "{{ mathlib_rev }}"
 name = "{{ name }}"
 # Verso warns about Lean lines longer than 60 columns, for narrow screens.
 leanOptions = { weak.verso.code.warnLineLength = 0 }
+
+# The program that builds the site; `stemma preview` writes it.
+[[lean_exe]]
+name = "stemma-site"
+srcDir = ".stemma/site"
+root = "StemmaSite"
+supportInterpreter = true

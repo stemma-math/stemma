@@ -6,6 +6,7 @@ mod config;
 mod lake;
 mod library;
 mod report;
+mod site;
 mod templates;
 
 use std::path::PathBuf;
@@ -65,6 +66,15 @@ enum Commands {
     Check,
     /// Show the state of every environment.
     Status,
+    /// Build the library's site and serve it locally.
+    Preview {
+        /// Build the site without serving it.
+        #[arg(long)]
+        no_serve: bool,
+        /// The port to serve on (or the next free one).
+        #[arg(long, default_value_t = 8000)]
+        port: u16,
+    },
     /// Start Claude Code, equipped to work in the library.
     Claude(AgentArgs),
     /// Start Codex, equipped to work in the library.
@@ -137,6 +147,7 @@ fn main() -> ExitCode {
         .map(|()| true),
         Commands::Check => commands::check(cli.json),
         Commands::Status => commands::status(cli.json),
+        Commands::Preview { no_serve, port } => site::preview(!no_serve, port, cli.json),
         Commands::Claude(args) => start(agent::Agent::Claude, args),
         Commands::Codex(args) => start(agent::Agent::Codex, args),
     };
