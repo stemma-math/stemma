@@ -22,6 +22,8 @@ jobs:
         with:
           primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'nix/**', 'Cargo.lock') }}
           restore-prefixes-first-match: nix-${{ runner.os }}-
+      - name: Cargo.lock is up to date
+        run: nix develop --command cargo metadata --locked --format-version 1 > /dev/null
       - name: Check the flake (formatting, the package and its tests)
         run: nix flake check --print-build-logs
       - name: Clippy
