@@ -30,7 +30,7 @@ library's Lean name, for example `Algebra`.
 ├── readings/              # curated readings: guides, papers (reserved)
 │   └── <reading>/
 ├── .github/               # the forge's checks and rules (GitHub)
-├── AGENTS.md              # points agents at `stemma`
+├── AGENTS.md              # the group's instructions for agents
 ├── README.md
 └── .gitignore
 ```
@@ -46,7 +46,8 @@ Who writes each entry:
 | `references.bib` | agents; every entry checked by a person |
 | `signatures/` | the signing step only, never an agent |
 | `readings/` | agents, and people who want to |
-| `.github/`, `AGENTS.md`, `.gitignore` | `stemma` only |
+| `AGENTS.md` | the group, except a block at its top that `stemma` writes |
+| `.github/`, `.gitignore` | `stemma` only |
 
 ### Organization is free; every module reads on its own
 
@@ -86,9 +87,9 @@ Who writes each entry:
 
 The rules, skills and permissions agents work with belong to the version of
 `stemma` the library uses, which loads them when it starts an agent
-(`stemma claude`, `stemma codex`). The library only carries `AGENTS.md`, which
-says to work through `stemma`, so that an agent started directly knows it is
-not equipped.
+(`stemma claude`, `stemma codex`). `AGENTS.md` holds the group's own
+instructions, and a block that `stemma` keeps at its top so that an agent
+started without `stemma` notices it (§5).
 
 ### Dependencies
 
@@ -475,9 +476,9 @@ bob   = { roles = ["signer"] }
 carol = { roles = [] }
 
 [policy]
-# Who may merge their own pull requests once every check passes. For them,
-# `stemma` turns on the forge's auto-merge when they share.
-self_merge = ["maintainer", "signer"]
+# Who may merge their pull requests without another member's approval, once
+# every check passes.
+merge_without_approval = ["maintainer", "signer"]
 
 # Which kinds of change also need the approval of another member with one of
 # these roles.
@@ -486,9 +487,10 @@ new-central = ["signer"]
 policy      = ["maintainer"]
 ```
 
-- A pull request whose author is in `self_merge` is merged as soon as every
-  check passes. Otherwise it waits for the approval of a member with one of
-  those roles.
+- Merging is always a person's act: nothing is merged by itself.
+- A pull request whose author is in `merge_without_approval` may be merged
+  once every check passes. Otherwise it also needs the approval of a member
+  with one of those roles.
 - `policy.review` names kinds of change, computed from the content of the
   pull request (for example `new-central`, a new central environment, or
   `dependencies`, a change of versions), and the roles whose approval they
@@ -499,8 +501,8 @@ policy      = ["maintainer"]
   that a pull request cannot change the policy that judges it. A change to
   `stemma.toml` always needs a maintainer's approval (`policy`), and that
   cannot be turned off.
-- By default every member is in `self_merge`, and only `policy` needs a
-  review.
+- By default every member is in `merge_without_approval`, and only `policy`
+  needs a review.
 
 ### Forges
 
@@ -510,7 +512,6 @@ The first forge Stemma supports is GitHub:
 |---|---|
 | `main` changes only through pull requests | A ruleset on `main`: pull requests required, no direct or forced pushes |
 | Required checks | A GitHub Actions workflow written by `stemma` (`.github/workflows/stemma.yml`) that runs `stemma check` and `stemma verify`, marked as a required status check |
-| Merging by itself | GitHub's auto-merge |
 | Required reviews | GitHub approvals, whose authors the policy check matches against roles |
 | The policy read from `main` | The policy job reads `stemma.toml` from the base commit |
 | The library's site | GitHub Pages, published from `main` by the same workflow |
@@ -525,7 +526,18 @@ The first forge Stemma supports is GitHub:
 
 - `stemma claude` and `stemma codex` start the agent in the library with the
   instructions, skills and permissions of the library's `stemma` version. They
-  synchronize nothing; they may show a summary of `stemma status`.
+  synchronize nothing.
+- **When a session starts**, the agent gets a short summary that costs no
+  build: the branch, uncommitted changes, and work not yet in `main`. Claude
+  Code gets it from a hook passed when `stemma` starts it, so it is given
+  again when a session resumes; Codex, which runs hooks only once a person
+  trusts them, gets it in its instructions.
+- **Agents started without `stemma`** notice it. `AGENTS.md`, which every
+  agent reads, begins with a block `stemma` writes: an equipped agent's
+  instructions contain the section that block names, and an agent whose
+  instructions do not must tell the person, before doing anything else, to
+  start it again through `stemma`. `stemma` keeps the block current, and
+  `stemma check` fails when it is missing.
 - **Permissions.** The agent may not write the files only `stemma` writes
   (§1), nor `signatures/`; it may not run `stemma sign`, push to `main` or
   force a push.
@@ -544,7 +556,7 @@ The first forge Stemma supports is GitHub:
 
 | Command | What it does |
 |---|---|
-| `stemma init` | Creates a library: layout, `stemma.toml`, dependencies, forge setup |
+| `stemma init` | Creates a library: layout, `stemma.toml`, dependencies, git and its remote; in a terminal it asks what it needs |
 | `stemma new` | Creates a module (document or Lean) and adds it to the table of contents |
 | `stemma check` | Runs every check of this specification |
 | `stemma status` | Shows states: not formalized, pending, signatures, distance from `main` |

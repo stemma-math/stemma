@@ -42,7 +42,7 @@ New central environments enter unsigned; nothing waits for them.
 A read-back translates an environment's Lean into prose, blind: a fresh agent
 session sees only the Lean. Comparing it with the prose is an easy way to
 audit. It is voluntary, and no signature requires one. When the person wants
-to audit (before signing, or after formalizing something central), offer:
+to audit (before signing, or after writing something central), offer:
 
 ```sh
 stemma readback --no-serve --json          # central environments without one
