@@ -328,6 +328,29 @@ not central.
 - A signature records who signed and, when there was one, which agent proposed
   the change (from the commit trailers).
 
+### How a signature is made
+
+Signing must be a deliberate act of a person. Agents run on that person's
+machine with their credentials, so the aim is not to stop a malicious agent,
+but to make sure that neither an agent's shortcut nor a person's offhand
+"sign it for me" can produce a signature.
+
+- A signer runs `stemma sign` in their own terminal. It shows what awaits a
+  signature, grouped by cause: for each environment, its prose, its Lean
+  statement, its read-back (below) and what changed since its last signature.
+  The signer confirms each group explicitly.
+- `stemma sign` writes the files in `signatures/` and makes a commit signed
+  with the signer's SSH or GPG key, which goes into the pull request.
+- Three barriers keep agents out:
+  1. `stemma sign` runs only in an interactive terminal, which agents' shell
+     tools are not;
+  2. the agents `stemma` starts are not allowed to run it;
+  3. the pull request's checks accept a change to `signatures/` only in
+     commits that touch nothing else and are signed with the key of a
+     member with the `signer` role.
+- Agents prepare signatures but never make them: when a pull request needs
+  signatures, the agent tells the person which ones, and why.
+
 ## 4. Collaboration
 
 A library lives in a repository on a forge, with one shared branch, `main`.
@@ -431,8 +454,8 @@ The first forge Stemma supports is GitHub:
 
 ## Open questions
 
-1. **Signatures.** How a signature is made, out of an agent's reach; the audit (read-back) that comes with it; and the format of
-   `signatures/<label>.toml`.
+1. **Signatures.** The read-back that comes with a signature, and the format
+   of `signatures/<label>.toml`.
 2. **Private work.** Whether a person can keep modules private within the
    group, and where they live.
 3. **Readings** (`readings/`). Their format, how they cite the
