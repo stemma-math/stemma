@@ -14,12 +14,12 @@ const INSTRUCTIONS: &str = include_str!("../agent/instructions.md");
 /// The skills, as (name, `SKILL.md`).
 const SKILLS: &[(&str, &str)] = &[
     (
-        "stemma-documents",
-        include_str!("../agent/skills/stemma-documents/SKILL.md"),
+        "stemma-mathematics",
+        include_str!("../agent/skills/stemma-mathematics/SKILL.md"),
     ),
     (
-        "stemma-formalization",
-        include_str!("../agent/skills/stemma-formalization/SKILL.md"),
+        "stemma-documents",
+        include_str!("../agent/skills/stemma-documents/SKILL.md"),
     ),
     (
         "stemma-sharing",
@@ -37,7 +37,6 @@ const PROTECTED: &[&str] = &[
     "lakefile.toml",
     "lake-manifest.json",
     "lean-toolchain",
-    "AGENTS.md",
     ".gitignore",
     ".github/**",
     "signatures/**",
@@ -71,7 +70,51 @@ pub struct Launch {
     pub branch: Option<String>,
 }
 
-/// The Claude Code settings for a session: what the agent may not do.
+/// What an agent should know when its session starts, cheap to compute: no
+/// build, only git.
+pub fn session_summary(library: &Library) -> String {
+    let dir = &library.dir;
+    let git = |args: &[&str]| {
+        Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+    };
+    let config = &library.config.library;
+    let mut lines = vec![format!(
+        "This session is equipped by stemma, in the library {} ({}).",
+        config.title, config.name
+    )];
+    if let Some(branch) = git(&["branch", "--show-current"]) {
+        lines.push(format!("- Branch: {branch}."));
+    }
+    if let Some(changes) = git(&["status", "--porcelain"]) {
+        let n = changes.lines().count();
+        if n > 0 {
+            lines.push(format!("- {n} files have uncommitted changes."));
+        }
+    }
+    if let Some(ahead) = git(&["rev-list", "--count", "origin/main..HEAD"])
+        && ahead != "0"
+    {
+        lines.push(format!("- {ahead} commits are not in main yet."));
+    }
+    lines.push("Run `stemma status --json` when you need the state of the library.".into());
+    lines.join("\n")
+}
+
+/// The command that runs this `stemma`, for hooks.
+fn this_stemma() -> String {
+    std::env::current_exe()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| "stemma".into())
+}
+
+/// The Claude Code settings for a session: what the agent may not do, and the
+/// summary it gets when its session starts (or resumes, or is compacted).
 fn claude_settings(library: &Path) -> serde_json::Value {
     let mut deny = Vec::new();
     for file in PROTECTED {
@@ -83,9 +126,13 @@ fn claude_settings(library: &Path) -> serde_json::Value {
     for command in FORBIDDEN_COMMANDS {
         deny.push(format!("Bash({command}:*)"));
     }
+    let hook = format!("'{}' hook session-start", this_stemma());
     json!({
         "permissions": { "deny": deny },
         "env": { SESSION_VARIABLE: "1" },
+        "hooks": {
+            "SessionStart": [{ "hooks": [{ "type": "command", "command": hook }] }],
+        },
     })
 }
 
@@ -142,9 +189,12 @@ fn codex_instructions() -> String {
     text
 }
 
-/// The arguments that give Codex its instructions and sandbox.
-fn prepare_codex() -> Vec<String> {
-    let instructions = toml::Value::String(codex_instructions()).to_string();
+/// The arguments that give Codex its instructions and sandbox. Codex runs
+/// hooks only once a person trusts them, so the summary a Claude Code session
+/// gets from its hook goes into Codex's instructions instead.
+fn prepare_codex(library: &Library) -> Vec<String> {
+    let text = format!("{}\n\n{}", codex_instructions(), session_summary(library));
+    let instructions = toml::Value::String(text).to_string();
     vec![
         "--sandbox".into(),
         "workspace-write".into(),
@@ -222,9 +272,12 @@ fn ensure_working_branch(dir: &Path) -> Result<Option<String>> {
 /// directory.
 pub fn prepare(agent: Agent, extra: Vec<String>, dry_run: bool) -> Result<Launch> {
     let library = Library::find(Path::new("."))?;
+    if !dry_run && crate::agents_md::ensure(&library.dir, &library.config.library.title)? {
+        crate::ui::note("Updated the block stemma keeps in AGENTS.md.");
+    }
     let mut args = match agent {
         Agent::Claude => prepare_claude(&library)?,
-        Agent::Codex => prepare_codex(),
+        Agent::Codex => prepare_codex(&library),
     };
     args.extend(extra);
     let branch = if dry_run {
@@ -293,7 +346,7 @@ mod tests {
         assert!(text.starts_with("# Working in a Stemma library"));
         for heading in [
             "# Writing Stemma documents",
-            "# Formalizing",
+            "# Doing mathematics",
             "# Saving and sharing",
             "# Signatures",
         ] {

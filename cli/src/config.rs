@@ -40,9 +40,10 @@ pub struct Member {
 /// Who may merge which pull requests.
 #[derive(Debug, Default, Deserialize)]
 pub struct Policy {
-    /// The roles whose members merge their own pull requests once every check
-    /// passes. When absent, every member does.
-    pub self_merge: Option<Vec<String>>,
+    /// The roles whose members may merge their pull requests without another
+    /// member's approval, once every check passes. When absent, every member
+    /// may. Merging is always done by a person.
+    pub merge_without_approval: Option<Vec<String>>,
     /// Kinds of change, and the roles whose approval they need.
     #[serde(default)]
     pub review: BTreeMap<String, Vec<String>>,
@@ -77,9 +78,10 @@ impl Config {
             .is_some_and(|m| m.roles.iter().any(|r| roles.contains(r)))
     }
 
-    /// Whether `account` may merge their own pull requests.
-    pub fn may_self_merge(&self, account: &str) -> bool {
-        match &self.policy.self_merge {
+    /// Whether `account` may merge their pull requests without another member's
+    /// approval.
+    pub fn may_merge_without_approval(&self, account: &str) -> bool {
+        match &self.policy.merge_without_approval {
             None => self.members.contains_key(account),
             Some(roles) => self.has_role(account, roles),
         }
@@ -116,7 +118,7 @@ bob = { roles = ["signer"] }
 carol = { roles = [] }
 
 [policy]
-self_merge = ["signer"]
+merge_without_approval = ["signer"]
 
 [policy.review]
 new-central = ["signer"]
@@ -125,9 +127,9 @@ new-central = ["signer"]
     #[test]
     fn reads_members_and_policy() {
         let c = Config::parse(CONFIG).unwrap();
-        assert!(c.may_self_merge("bob"));
-        assert!(!c.may_self_merge("carol"));
-        assert!(!c.may_self_merge("mallory"));
+        assert!(c.may_merge_without_approval("bob"));
+        assert!(!c.may_merge_without_approval("carol"));
+        assert!(!c.may_merge_without_approval("mallory"));
         assert_eq!(c.review_roles("new-central").unwrap(), ["signer"]);
         assert_eq!(c.review_roles("policy").unwrap(), ["maintainer"]);
         assert!(c.review_roles("dependencies").is_none());
@@ -135,8 +137,9 @@ new-central = ["signer"]
 
     #[test]
     fn by_default_every_member_merges_their_own_work() {
-        let c = Config::parse(&CONFIG.replace("self_merge = [\"signer\"]", "")).unwrap();
-        assert!(c.may_self_merge("carol"));
-        assert!(!c.may_self_merge("mallory"));
+        let c =
+            Config::parse(&CONFIG.replace("merge_without_approval = [\"signer\"]", "")).unwrap();
+        assert!(c.may_merge_without_approval("carol"));
+        assert!(!c.may_merge_without_approval("mallory"));
     }
 }

@@ -9,6 +9,7 @@ use serde_json::json;
 use crate::commands::{self, Checks};
 use crate::library::Library;
 use crate::report::Signature;
+use crate::ui;
 
 /// Runs git in the library.
 fn git(dir: &Path, args: &[&str]) -> Result<Output> {
@@ -77,7 +78,7 @@ fn pull_request(dir: &Path, branch: &str) -> Option<String> {
 
 /// Shares the working branch: checks, brings `main` in, checks again, pushes,
 /// and opens or updates the pull request.
-fn share_branch(library: &Library) -> Result<Outcome> {
+fn share_branch(library: &Library, json_output: bool) -> Result<Outcome> {
     let dir = &library.dir;
     let branch = git_ok(dir, &["branch", "--show-current"])?;
     if branch.is_empty() || branch == "main" {
@@ -117,7 +118,7 @@ fn share_branch(library: &Library) -> Result<Outcome> {
         }
         return Ok(outcome);
     }
-    let checks = commands::run_checks(library)?;
+    let checks = commands::run_checks(library, json_output)?;
     if !checks.ok() {
         outcome.checks = Some(checks);
         return Ok(outcome);
@@ -145,7 +146,7 @@ fn share_branch(library: &Library) -> Result<Outcome> {
 /// `stemma share`.
 pub fn share(json_output: bool) -> Result<bool> {
     let library = Library::find(Path::new("."))?;
-    let o = share_branch(&library)?;
+    let o = share_branch(&library, json_output)?;
     let checks_ok = o.checks.as_ref().is_some_and(Checks::ok);
     let ok = o.conflicts.is_empty() && checks_ok && o.pushed;
     if json_output {
@@ -163,39 +164,43 @@ pub fn share(json_output: bool) -> Result<bool> {
         return Ok(ok);
     }
     if !o.conflicts.is_empty() {
-        println!("Bringing in `main` left conflicts in:");
+        ui::error("Bringing in `main` left conflicts in:");
         for f in &o.conflicts {
-            println!("  {f}");
+            println!("    {}", ui::bold(f));
         }
-        println!("Resolve them, commit, and share again.");
+        ui::note("Resolve them, commit, and share again.");
         return Ok(false);
     }
     if let Some(checks) = &o.checks
         && !checks.ok()
     {
         if let Some(build) = &checks.build {
-            println!("The library does not build:\n{build}");
+            commands::show_build_errors(build);
         }
         for p in &checks.problems {
-            println!("error: {p}");
+            ui::error(p);
         }
         return Ok(false);
     }
     match &o.pull_request {
-        Some(url) => println!("Shared {}: {url}", o.branch),
-        None => println!(
+        Some(url) => ui::success(format!("Shared {}: {url}", ui::bold(&o.branch))),
+        None => ui::warning(format!(
             "Pushed {}. Open a pull request from it to `main` (`gh` could not).",
             o.branch
-        ),
+        )),
     }
     if !o.stale.is_empty() {
-        println!(
-            "It needs signatures before it can be merged: {}. Run `stemma sign`.",
+        ui::warning(format!(
+            "It needs signatures before it can be merged: {}.",
             o.stale.join(", ")
-        );
+        ));
+        ui::note("A signer runs `stemma sign` in their own terminal.");
     }
     if !o.unsigned.is_empty() {
-        println!("Central and not signed yet: {}.", o.unsigned.join(", "));
+        ui::note(format!(
+            "Central and not signed yet: {}.",
+            o.unsigned.join(", ")
+        ));
     }
     Ok(ok)
 }

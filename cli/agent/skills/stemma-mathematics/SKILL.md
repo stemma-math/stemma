@@ -1,9 +1,9 @@
 ---
-name: stemma-formalization
-description: The cycle for formalizing mathematics in a Stemma library — searching Mathlib first, stating precisely, statements before proofs, and keeping prose and Lean aligned. Use whenever the person asks to add, state, formalize or prove something.
+name: stemma-mathematics
+description: How to do mathematics in a Stemma library — finding what exists, stating precisely, statements before proofs, and keeping prose and Lean saying the same thing. Use whenever the person wants to define, state, prove or explore something.
 ---
 
-# Formalizing
+# Doing mathematics
 
 ## The cycle for each request
 
@@ -17,7 +17,7 @@ description: The cycle for formalizing mathematics in a Stemma library — searc
    - where it fits in the library;
    - design decisions, with alternatives and a recommendation;
    - Mathlib conventions that change the meaning.
-2. **State it in a document**: the environment, its prose, and its Lean with
+2. **Write it in a document**: the environment, its prose, and its Lean with
    the statement and `sorry` as proof. Definitions must be complete: no
    `sorry` in their data. Run `stemma check --json`.
 3. **Wait for the person to agree with central statements** before spending

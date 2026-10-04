@@ -16,6 +16,7 @@ use crate::commands;
 use crate::config::Config;
 use crate::library::Library;
 use crate::report::{Report, Signature};
+use crate::ui;
 
 /// The pull request being verified, from the forge's event.
 struct PullRequest {
@@ -166,7 +167,7 @@ pub fn verify(base: Option<String>, json_output: bool) -> Result<bool> {
     let mut notes: Vec<String> = Vec::new();
 
     // The library itself.
-    let checks = commands::run_checks(&library)?;
+    let checks = commands::run_checks(&library, json_output)?;
     if !checks.ok() {
         failures.push("`stemma check` fails: run it to see why.".into());
     }
@@ -263,11 +264,11 @@ pub fn verify(base: Option<String>, json_output: bool) -> Result<bool> {
                 None => base_config.members.contains_key(u),
             })
         };
-        if !base_config.may_self_merge(&pr.author)
-            && !approved_by(base_config.policy.self_merge.as_deref())
+        if !base_config.may_merge_without_approval(&pr.author)
+            && !approved_by(base_config.policy.merge_without_approval.as_deref())
         {
             failures.push(format!(
-                "{} may not merge their own pull requests: it needs the approval of a member who may.",
+                "{} needs another member's approval to merge: the approval of a member who may merge without one.",
                 pr.author
             ));
         }
@@ -294,13 +295,13 @@ pub fn verify(base: Option<String>, json_output: bool) -> Result<bool> {
         println!("{}", serde_json::to_string_pretty(&value)?);
     } else {
         for f in &failures {
-            println!("error: {f}");
+            ui::error(f);
         }
         for n in &notes {
-            println!("note: {n}");
+            ui::note(n);
         }
         if ok {
-            println!("The pull request may be merged.");
+            ui::success("The pull request may be merged.");
         }
     }
     Ok(ok)

@@ -8,7 +8,6 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::lake;
 use crate::library::Library;
 use crate::report::{Environment, Report};
 use crate::site;
@@ -183,15 +182,13 @@ Lean into prose without seeing its prose. Compare the two.</p>{body}</body></htm
 /// `stemma readback`.
 pub fn readback(options: Options, json_output: bool) -> Result<bool> {
     let library = Library::find(Path::new("."))?;
-    let build = lake::build(&library)?;
-    if !build.success {
-        println!(
-            "The library does not build:\n{}",
-            lake::problems(&build.output)
-        );
-        return Ok(false);
-    }
-    let report = lake::extract(&library)?;
+    let report = match crate::commands::build_and_extract(&library, json_output)? {
+        Ok(report) => report,
+        Err(output) => {
+            crate::commands::show_build_errors(&output);
+            return Ok(false);
+        }
+    };
     let dir = readbacks_dir(&library);
     std::fs::create_dir_all(&dir)?;
     let chosen: Vec<&Environment> = report
@@ -225,14 +222,14 @@ pub fn readback(options: Options, json_output: bool) -> Result<bool> {
         if current && !options.force {
             continue;
         }
-        if !json_output {
-            println!("Reading back {label}…");
-        }
+        let spinner = crate::ui::Spinner::start(format!("Reading back {label}"), json_output);
         let text = translate(
             options.translator,
             options.model.as_deref(),
             &prompt(&formal_side(&report, env)),
-        )?;
+        );
+        spinner.stop();
+        let text = text?;
         let r = Readback {
             label: label.clone(),
             display: env.record.display.clone(),
@@ -269,7 +266,11 @@ pub fn readback(options: Options, json_output: bool) -> Result<bool> {
         if json_output {
             println!("{}", json!({ "made": made, "page": index }));
         } else {
-            println!("Made {} read-backs; see {}.", made.len(), index.display());
+            crate::ui::success(format!(
+                "Made {} read-backs {}",
+                made.len(),
+                crate::ui::dim(index.display())
+            ));
         }
         return Ok(true);
     }
@@ -278,10 +279,12 @@ pub fn readback(options: Options, json_output: bool) -> Result<bool> {
     if json_output {
         println!("{}", json!({ "made": made, "page": index, "url": url }));
     } else {
-        println!(
-            "Made {} read-backs. Serving them at {url} (Ctrl-C to stop).",
-            made.len()
-        );
+        crate::ui::success(format!(
+            "Made {} read-backs. Serving them at {}",
+            made.len(),
+            crate::ui::bold(&url)
+        ));
+        crate::ui::note("Ctrl-C to stop.");
     }
     for stream in listener.incoming().flatten() {
         let _ = site::respond(stream, &dir);
