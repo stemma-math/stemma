@@ -212,7 +212,7 @@ before they are used (for example, a `hypothesis` named "Hypothesis" on top of
 |---|---|---|---|
 | `label` | `definition`, `statement` | yes | A stable identifier, unique in the library, that readings, papers and signatures cite. It cannot change once signed. |
 | `label` | `proof`, `remark` | no | The same, when something needs to cite them. |
-| `central` | `definition`, `statement` | yes, `true` or `false` | Whether the environment is central: signed and audited (§ signatures). |
+| `central` | `definition`, `statement` | yes, `true` or `false` | Whether the environment is central: signed and audited (§3). |
 | `of` | `proof` | yes | The label of the definition or statement it proves, which must already exist, in the same module or an imported one. |
 | `title` | any | no | A name shown with the environment: "Theorem 3.2 (Zorn's lemma)". |
 | `cited` | `definition`, `statement` | no | A reference in `references.bib`: the environment's obligations are accepted from the literature instead of proved. |
@@ -246,17 +246,129 @@ The elaborator enforces these; breaking one is a compilation error.
   So the axioms a result depends on say exactly which literature it rests on.
 - A `proof` names, with `of`, an existing definition or statement.
 
+## 3. Signatures
+
+A signature is a person's approval of one state of a central environment. It
+is how people stay in charge of what the library claims without reviewing
+everything agents write.
+
+### What a signature covers
+
+A signature covers, for a central `definition` or `statement`:
+
+- **its identity**: its label and base kind (not its name, which is
+  presentation);
+- **its marks with meaning**: `central` and `cited` (not `title`);
+- **its prose**: the text of the environment, normalized so that spacing does
+  not count. The prose of its `proof` is not covered, as the formal proof is
+  not;
+- **its formal meaning**: the types of its declarations, and for a definition
+  their values with proofs erased, together with their closure. The closure
+  includes every declaration used, central or not: changing a dark-work
+  definition that a signed statement uses changes what the statement says.
+  What comes from Mathlib or from other pinned libraries counts by its
+  content, so a version change only affects the signatures whose closure it
+  actually changes.
+
+A signature records two fingerprints, one of the prose and one of the formal
+meaning, so that when it no longer matches, Stemma can say why.
+
+### States
+
+Only central environments have a signature state. It is independent of their
+proof state (§2), so a statement can be signed and still pending: its
+statement is approved, and its proof is not finished.
+
+| State | Meaning |
+|---|---|
+| **unsigned** | Central, and never signed (new, or newly central) |
+| **signed** | Both current fingerprints match a signature |
+| **stale** | Signed, but a fingerprint no longer matches |
+
+- An environment that is not formalized cannot be signed: a signature checks
+  that the prose and the Lean say the same thing. Its statement may still be
+  pending (`theorem … := sorry`), but it must exist.
+- A stale environment says why: its prose changed, its formal statement
+  changed, or something in its closure changed, naming it.
+- **Changes cascade.** When a definition changes, every signed environment
+  whose closure contains it becomes stale. It is never signed again by
+  inheritance, because that is exactly the case a person must look at; but
+  the cause and its consequences are signed together, in one act.
+
+### What needs a signature
+
+The shared branch never holds a stale environment: a change that would leave
+one stale is not integrated until it carries the new signatures (§4). These
+changes need a signature:
+
+- changing the prose or the formal meaning of a signed environment, including
+  through its closure (a dark-work definition it uses, a new Mathlib version);
+- removing a signed environment;
+- making a signed environment not central;
+- changing a signed environment's label or its `cited` mark.
+
+Everything else goes in without one: new central environments (unsigned
+until someone signs them), proofs of signed statements, dark work outside
+every signed closure, prose outside environments, and environments that are
+not central.
+
+## 4. Collaboration
+
+A library lives in a repository on a forge, with one shared branch, `main`.
+Changes reach `main` only through pull requests that pass the library's
+checks.
+
+### Working
+
+- Each person works on a branch of their own, `work/<person>` by default,
+  which `stemma` creates the first time. Starting an agent does not
+  synchronize anything: the person works, and the agent commits and pushes to
+  that branch, which keeps the work safe and visible to the group.
+- A branch may mix several things: a person need not decide in advance what a
+  piece of work will turn into.
+- People who know git work as they like (several branches, bringing `main` in
+  whenever they want). `stemma` only asks that what reaches `main` goes
+  through a pull request.
+
+### Sharing
+
+- Sharing is the only moment that looks at `main`. The agent brings in what
+  is new there, resolves conflicts (asking the person, in mathematical terms,
+  when two changes disagree about content) and opens or updates a pull request
+  from the working branch.
+- `stemma status` says how far a branch is from `main`, as information. It
+  never forces a synchronization.
+- When part of a branch needs a signature and part does not, the agent offers
+  to split it into two pull requests, so that the second waits without holding
+  back the first. The person decides.
+- Pull requests are merged without squashing, so that the working branch stays
+  valid after its work reaches `main`, and the next pull request carries only
+  what is new.
+
+### Checks
+
+| When | Who | What |
+|---|---|---|
+| While working | The agent, with `stemma check` | Everything, for quick feedback; it guarantees nothing |
+| On every push | The forge, at once | Protected files and layout |
+| On a pull request | Required checks | Everything, on `main` with the pull request applied: the build, the rules of this specification, and signatures. This is what guarantees |
+
+A pull request that would leave a signed environment stale says which
+signatures it needs, and is not merged until they are added to it.
+
 ## Open questions
 
-1. **Signatures.** One file per signed result avoids merge conflicts; one lock
-   file is easier to read. How a signature is made, and by whom, is part of
-   the signature protocol (to be written).
-2. **Private work.** Whether a person can keep modules private within the
+1. **Signatures.** Who signs; how a signature is made, out of an agent's
+   reach; the audit (read-back) that comes with it; and the format of
+   `signatures/<label>.toml`.
+2. **Group policy.** Who may merge which pull requests, and when another
+   member's review is required, set by each group in `stemma.toml`.
+3. **Private work.** Whether a person can keep modules private within the
    group, and where they live.
-3. **Readings** (`readings/`). Their format, how they cite the
+4. **Readings** (`readings/`). Their format, how they cite the
    library, and whether a paper lives in the library repository or in its
    own, citing a release of the library.
-4. **`stemma.toml`.** What it holds: the library's title, the pinned `stemma`
+5. **`stemma.toml`.** What it holds: the library's title, the pinned `stemma`
    version, the group's members and who can sign.
-5. **References across libraries.** How a document cites an environment of
+6. **References across libraries.** How a document cites an environment of
    another Stemma library it depends on.
