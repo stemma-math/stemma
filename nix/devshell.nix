@@ -33,6 +33,11 @@ in
           name = "MACOSX_DEPLOYMENT_TARGET";
           value = stdenv.hostPlatform.darwinMinVersion;
         }
+        {
+          # Rust's standard library links against libiconv on macOS.
+          name = "LIBRARY_PATH";
+          value = "${pkgs.libiconv}/lib";
+        }
       ];
 
     commands = [

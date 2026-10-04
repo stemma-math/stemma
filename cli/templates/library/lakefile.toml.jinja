@@ -1,0 +1,23 @@
+name = "{{ package }}"
+defaultTargets = ["{{ name }}"]
+
+[[require]]
+name = "stemma"
+{%- if stemma_path %}
+path = "{{ stemma_path }}"
+{%- else %}
+git = { url = "{{ stemma_git }}", subDir = "lean" }
+rev = "v{{ version }}"
+{%- endif %}
+{%- if mathlib %}
+
+[[require]]
+name = "mathlib"
+git = "https://github.com/leanprover-community/mathlib4"
+rev = "{{ mathlib_rev }}"
+{%- endif %}
+
+[[lean_lib]]
+name = "{{ name }}"
+# Verso warns about Lean lines longer than 60 columns, for narrow screens.
+leanOptions = { weak.verso.code.warnLineLength = 0 }
