@@ -16,8 +16,10 @@ in
         (root + "/Cargo.toml")
         (root + "/Cargo.lock")
         (root + "/cli")
-        # The Lean toolchain the command line works with.
+        # The Lean toolchain the command line works with, and the Lean
+        # library's version, which must be the command line's.
         (root + "/lean/lean-toolchain")
+        (root + "/lean/lakefile.toml")
       ];
     };
 
