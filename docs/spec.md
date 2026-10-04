@@ -29,6 +29,7 @@ library's Lean name, for example `Algebra`.
 │   └── <label>.toml
 ├── readings/              # curated readings of the library: guides, papers
 │   └── <reading>/
+├── .github/               # the forge's checks and rules (GitHub)
 ├── AGENTS.md              # points agents at `stemma`
 ├── README.md
 └── .gitignore
@@ -45,7 +46,7 @@ Who writes each entry:
 | `references.bib` | agents; every entry checked by a person |
 | `signatures/` | the signing step only, never an agent |
 | `readings/` | agents, and people who want to |
-| `AGENTS.md`, `.gitignore` | `stemma` only |
+| `.github/`, `AGENTS.md`, `.gitignore` | `stemma` only |
 
 ### Organization is free; every module reads on its own
 
@@ -356,19 +357,74 @@ checks.
 A pull request that would leave a signed environment stale says which
 signatures it needs, and is not merged until they are added to it.
 
+### Group policy
+
+Each group decides, in `stemma.toml`, who may merge which pull requests:
+
+```toml
+[members]
+alice = { roles = ["maintainer", "signer"] }
+bob   = { roles = ["signer"] }
+carol = { roles = [] }
+
+[policy]
+# Who may merge their own pull requests once every check passes. For them,
+# `stemma` turns on the forge's auto-merge when they share.
+self_merge = ["maintainer", "signer"]
+
+# Which kinds of change also need the approval of another member with one of
+# these roles.
+[policy.review]
+new-central = ["signer"]
+policy      = ["maintainer"]
+```
+
+- A pull request whose author is in `self_merge` is merged as soon as every
+  check passes. Otherwise it waits for the approval of a member with one of
+  those roles.
+- `policy.review` names kinds of change, computed from the content of the
+  pull request (for example `new-central`, a new central environment, or
+  `dependencies`, a change of versions), and the roles whose approval they
+  need.
+- Signatures are not reviews: a signature is about an environment, a review
+  about a pull request. A pull request may need both, or neither.
+- **The policy is always read from `main`, never from the pull request**, so
+  that a pull request cannot change the policy that judges it. A change to
+  `stemma.toml` always needs a maintainer's approval (`policy`), and that
+  cannot be turned off.
+- By default every member is in `self_merge`, and only `policy` needs a
+  review.
+
+### Forges
+
+The first forge Stemma supports is GitHub:
+
+| Piece | On GitHub |
+|---|---|
+| `main` changes only through pull requests | A ruleset on `main`: pull requests required, no direct or forced pushes |
+| Required checks | A GitHub Actions workflow written by `stemma` (`.github/workflows/stemma.yml`), marked as a required status check |
+| Merging by itself | GitHub's auto-merge |
+| Required reviews | GitHub approvals, whose authors the policy check matches against roles |
+| The policy read from `main` | The policy job reads `stemma.toml` from the base commit |
+| The library's site | GitHub Pages, published from `main` by the same workflow |
+
+- The build compiles the pull request's code, so it runs without secrets. The
+  policy job runs nothing from the pull request.
+- Builds cache `.lake` between runs.
+- `stemma` sets the repository up (rules, workflow, Pages) when it creates the
+  library.
+
 ## Open questions
 
 1. **Signatures.** Who signs; how a signature is made, out of an agent's
    reach; the audit (read-back) that comes with it; and the format of
    `signatures/<label>.toml`.
-2. **Group policy.** Who may merge which pull requests, and when another
-   member's review is required, set by each group in `stemma.toml`.
-3. **Private work.** Whether a person can keep modules private within the
+2. **Private work.** Whether a person can keep modules private within the
    group, and where they live.
-4. **Readings** (`readings/`). Their format, how they cite the
+3. **Readings** (`readings/`). Their format, how they cite the
    library, and whether a paper lives in the library repository or in its
    own, citing a release of the library.
-5. **`stemma.toml`.** What it holds: the library's title, the pinned `stemma`
-   version, the group's members and who can sign.
-6. **References across libraries.** How a document cites an environment of
+4. **`stemma.toml`.** What it holds besides members and policy: the library's
+   title, the pinned `stemma` version.
+5. **References across libraries.** How a document cites an environment of
    another Stemma library it depends on.
