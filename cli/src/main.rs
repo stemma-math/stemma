@@ -2,8 +2,10 @@
 
 mod agent;
 mod agents_md;
+mod branches;
 mod commands;
 mod config;
+mod help;
 mod init;
 mod lake;
 mod library;
@@ -20,11 +22,15 @@ mod verify;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(version, about = "Mathematics in Lean, written with agents")]
-struct Cli {
+#[command(
+    version,
+    about = "Mathematics in Lean, written with agents",
+    styles = help::styles()
+)]
+pub(crate) struct Cli {
     /// Print the result as JSON, for agents.
     #[arg(long, global = true)]
     json: bool,
@@ -149,6 +155,9 @@ enum Commands {
         /// Do not update the dependencies (`lake update`).
         #[arg(long)]
         no_update: bool,
+        /// Do not commit the upgrade.
+        #[arg(long)]
+        no_commit: bool,
     },
     /// Hooks agents run; not meant to be called by hand.
     #[command(hide = true)]
@@ -202,7 +211,13 @@ fn start(agent: agent::Agent, args: AgentArgs) -> anyhow::Result<bool> {
 }
 
 fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let command = Cli::command();
+    let template = help::template(&command);
+    let matches = command.help_template(template).get_matches();
+    let cli = match Cli::from_arg_matches(&matches) {
+        Ok(cli) => cli,
+        Err(error) => error.exit(),
+    };
     let result = match cli.command {
         Commands::Init {
             dir,
@@ -276,7 +291,11 @@ fn main() -> ExitCode {
         Commands::Share => share::share(cli.json),
         Commands::Sign { labels, no_commit } => sign::sign(labels, !no_commit),
         Commands::Verify { base } => verify::verify(base, cli.json),
-        Commands::Upgrade { dry_run, no_update } => upgrade::upgrade(dry_run, !no_update, cli.json),
+        Commands::Upgrade {
+            dry_run,
+            no_update,
+            no_commit,
+        } => upgrade::upgrade(dry_run, !no_update, !no_commit, cli.json),
         Commands::Hook { event } => hook(&event),
         Commands::Claude(args) => start(agent::Agent::Claude, args),
         Commands::Codex(args) => start(agent::Agent::Codex, args),

@@ -11,9 +11,33 @@ fn scratch(name: &str) -> PathBuf {
     dir
 }
 
+/// A git identity, so that commits work wherever the tests run.
+const IDENTITY: [(&str, &str); 4] = [
+    ("GIT_AUTHOR_NAME", "Test"),
+    ("GIT_AUTHOR_EMAIL", "test@example.com"),
+    ("GIT_COMMITTER_NAME", "Test"),
+    ("GIT_COMMITTER_EMAIL", "test@example.com"),
+];
+
+fn git(dir: &Path, args: &[&str]) -> String {
+    let out = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .envs(IDENTITY)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
 fn stemma(dir: &Path, args: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_stemma"))
         .args(args)
+        .envs(IDENTITY)
         .current_dir(dir)
         .output()
         .unwrap()
@@ -188,4 +212,47 @@ fn upgrade_moves_an_old_library_to_this_version() {
     let out = stemma(&dir, &["upgrade", "--no-update", "--json"]);
     let again: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert!(again["changed"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn upgrade_on_main_goes_to_a_branch_of_its_own() {
+    let dir = scratch("upgrade-branch");
+    let out = stemma(
+        &dir,
+        &["init", ".", "--name", "Alg", "--no-mathlib", "--commit"],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let config = read(dir.join("stemma.toml")).replace(
+        &format!("stemma = \"{}\"", env!("CARGO_PKG_VERSION")),
+        "stemma = \"0.1.0\"",
+    );
+    std::fs::write(dir.join("stemma.toml"), config).unwrap();
+    git(&dir, &["commit", "--quiet", "-am", "Pretend to be old"]);
+    let main = git(&dir, &["rev-parse", "main"]);
+
+    let out = stemma(&dir, &["upgrade", "--no-update", "--json"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let result: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let branch = format!("upgrade/stemma-{}", env!("CARGO_PKG_VERSION"));
+    assert_eq!(result["branch"], branch.as_str());
+    assert_eq!(result["committed"], true);
+    assert_eq!(git(&dir, &["branch", "--show-current"]), branch);
+    assert_eq!(
+        git(&dir, &["rev-parse", "main"]),
+        main,
+        "main must not move"
+    );
+    assert_eq!(git(&dir, &["status", "--porcelain"]), "");
+    assert_eq!(
+        git(&dir, &["log", "-1", "--format=%s"]),
+        format!("Upgrade to stemma {}", env!("CARGO_PKG_VERSION"))
+    );
 }

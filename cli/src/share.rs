@@ -36,6 +36,8 @@ fn git_ok(dir: &Path, args: &[&str]) -> Result<String> {
 /// What sharing found, for the person and for agents.
 struct Outcome {
     branch: String,
+    /// Whether the work was on `main`, and moved to `branch`.
+    moved_from_main: bool,
     /// Files in conflict with `main`, when bringing it in failed.
     conflicts: Vec<String>,
     checks: Option<Checks>,
@@ -80,15 +82,28 @@ fn pull_request(dir: &Path, branch: &str) -> Option<String> {
 /// and opens or updates the pull request.
 fn share_branch(library: &Library, json_output: bool) -> Result<Outcome> {
     let dir = &library.dir;
-    let branch = git_ok(dir, &["branch", "--show-current"])?;
-    if branch.is_empty() || branch == "main" {
-        bail!("share from a working branch, not from `main`");
+    let Some(mut branch) = crate::branches::current(dir) else {
+        bail!("share from a branch: HEAD is on none");
+    };
+    // Work done on `main` moves to a working branch of its own: nothing is
+    // pushed to `main`, and nothing is lost.
+    let mut moved_from_main = false;
+    if branch == "main" {
+        branch = crate::branches::move_to_new(dir, &format!("work/{}", crate::agent::person()))?;
+        moved_from_main = true;
     }
     if !git_ok(dir, &["status", "--porcelain"])?.is_empty() {
+        if moved_from_main {
+            bail!(
+                "your work was on `main`, and is now on the branch {branch}; it has \
+                 uncommitted changes: commit them, then share again"
+            );
+        }
         bail!("there are uncommitted changes: commit them before sharing");
     }
     let mut outcome = Outcome {
         branch: branch.clone(),
+        moved_from_main,
         conflicts: Vec::new(),
         checks: None,
         pushed: false,
@@ -155,13 +170,20 @@ pub fn share(json_output: bool) -> Result<bool> {
             .as_ref()
             .map_or((vec![], None), |c| (c.problems.clone(), c.build.clone()));
         let value = json!({
-            "ok": ok, "branch": o.branch, "conflicts": o.conflicts,
+            "ok": ok, "branch": o.branch, "moved_from_main": o.moved_from_main,
+            "conflicts": o.conflicts,
             "problems": problems, "build": build, "pushed": o.pushed,
             "pull_request": o.pull_request,
             "needs_signatures": o.stale, "unsigned": o.unsigned,
         });
         println!("{}", serde_json::to_string_pretty(&value)?);
         return Ok(ok);
+    }
+    if o.moved_from_main {
+        ui::note(format!(
+            "Your work was on `main`: it is now on the branch {}.",
+            ui::bold(&o.branch)
+        ));
     }
     if !o.conflicts.is_empty() {
         ui::error("Bringing in `main` left conflicts in:");
