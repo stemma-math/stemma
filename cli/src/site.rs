@@ -40,7 +40,6 @@ fn ensure_site_target(library: &Library) -> Result<()> {
 
 /// Writes the program that assembles the site from the table of contents.
 fn write_program(library: &Library, report: &Report) -> Result<()> {
-    let root = std::fs::read_to_string(library.root_path())?;
     let documents: Vec<&str> = report
         .modules
         .iter()
@@ -52,7 +51,7 @@ fn write_program(library: &Library, report: &Report) -> Result<()> {
         json!({
             "name": library.name(),
             "title": library.config.library.title,
-            "root_document": root.contains("#doc ("),
+            "root_document": report.root_document,
             "documents": documents,
         }),
     )?;

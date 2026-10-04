@@ -65,8 +65,9 @@ impl Library {
     pub fn table_of_contents(&self) -> Result<Vec<String>> {
         let text = std::fs::read_to_string(self.root_path())
             .with_context(|| format!("reading {}", self.root_path().display()))?;
-        Ok(imports(&text)
+        Ok(parse_imports(&text)?
             .into_iter()
+            .map(|(_, m)| m)
             .filter(|m| in_library(self.name(), m))
             .collect())
     }
@@ -94,25 +95,47 @@ pub fn in_library(name: &str, module: &str) -> bool {
         .is_some_and(|rest| rest.starts_with('.'))
 }
 
-/// The modules a Lean file imports, in order.
-pub fn imports(text: &str) -> Vec<String> {
-    header_lines(text)
-        .filter_map(|line| import_of(line).map(str::to_string))
-        .collect()
-}
-
-/// The module an `import` line imports.
-fn import_of(line: &str) -> Option<&str> {
-    let rest = line.trim().strip_prefix("import ")?;
-    rest.split_whitespace().next()
-}
-
-/// The lines of a file's header: everything before its first command.
-fn header_lines(text: &str) -> impl Iterator<Item = &str> {
-    text.lines().take_while(|line| {
-        let line = line.trim();
-        line.is_empty() || line.starts_with("import ") || line.starts_with("--")
-    })
+/// The imports of a root module, with their line numbers, in order.
+///
+/// The root module has a fixed form, so that it is read exactly as Lean reads
+/// it: it begins with its imports, one `import <Module>` per line (blank lines
+/// between them are allowed), and its first other line is a command. Anything
+/// else before that command (a comment, two modules on one line, `module`,
+/// `public import`…) is an error, never a guess.
+pub fn parse_imports(text: &str) -> Result<Vec<(usize, String)>> {
+    let mut out = Vec::new();
+    for (i, line) in text.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let tokens: Vec<&str> = trimmed.split_whitespace().collect();
+        if tokens[0] == "import" {
+            if tokens.len() != 2 {
+                bail!(
+                    "line {}: the table of contents imports one module per line",
+                    i + 1
+                );
+            }
+            out.push((i, tokens[1].to_string()));
+            continue;
+        }
+        // The first other line ends the imports, and must be a command.
+        let header_word = ["module", "prelude", "public", "meta", "private"];
+        if trimmed.starts_with("--")
+            || trimmed.starts_with("/-")
+            || header_word.contains(&tokens[0])
+            || tokens.contains(&"import")
+        {
+            bail!(
+                "line {}: the table of contents has nothing before its first command but \
+                 `import` lines",
+                i + 1
+            );
+        }
+        break;
+    }
+    Ok(out)
 }
 
 /// Whether a string is a valid module name within the library `name`.
@@ -151,12 +174,8 @@ pub fn insert_import(
     after: Option<&str>,
 ) -> Result<String> {
     let lines: Vec<&str> = text.lines().collect();
-    let header = header_lines(text).count();
-    let import_lines: Vec<(usize, &str)> = lines[..header]
-        .iter()
-        .enumerate()
-        .filter_map(|(i, line)| import_of(line).map(|m| (i, m)))
-        .collect();
+    let parsed = parse_imports(text)?;
+    let import_lines: Vec<(usize, &str)> = parsed.iter().map(|(i, m)| (*i, m.as_str())).collect();
     if import_lines.iter().any(|(_, m)| *m == module) {
         bail!("{module} is already in the table of contents");
     }
@@ -196,12 +215,33 @@ mod tests {
 
     const ROOT: &str = "import Stemma\nimport Alg.Groups.Basic\nimport Alg.Rings.Basic\n\n#doc (Stemma) \"Alg\" =>\n";
 
+    fn imports(text: &str) -> Vec<String> {
+        parse_imports(text)
+            .unwrap()
+            .into_iter()
+            .map(|(_, m)| m)
+            .collect()
+    }
+
     #[test]
     fn reads_imports() {
         assert_eq!(
             imports(ROOT),
             ["Stemma", "Alg.Groups.Basic", "Alg.Rings.Basic"]
         );
+    }
+
+    #[test]
+    fn refuses_anything_else_before_the_first_command() {
+        for text in [
+            "import A B\n#doc",
+            "-- a comment\nimport A\n#doc",
+            "import A\n/- a comment -/\nimport B\n#doc",
+            "module\nimport A\n#doc",
+            "public import A\n#doc",
+        ] {
+            assert!(parse_imports(text).is_err(), "{text:?}");
+        }
     }
 
     #[test]

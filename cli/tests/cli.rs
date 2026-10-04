@@ -11,12 +11,16 @@ fn scratch(name: &str) -> PathBuf {
     dir
 }
 
-/// A git identity, so that commits work wherever the tests run.
-const IDENTITY: [(&str, &str); 4] = [
+/// A git identity, so that commits work wherever the tests run, and no global
+/// configuration of git or of `gh` (such as a signing key or a login).
+const IDENTITY: [(&str, &str); 7] = [
     ("GIT_AUTHOR_NAME", "Test"),
     ("GIT_AUTHOR_EMAIL", "test@example.com"),
     ("GIT_COMMITTER_NAME", "Test"),
     ("GIT_COMMITTER_EMAIL", "test@example.com"),
+    ("GIT_CONFIG_GLOBAL", "/dev/null"),
+    ("GIT_CONFIG_NOSYSTEM", "1"),
+    ("GH_CONFIG_DIR", "/nonexistent"),
 ];
 
 fn git(dir: &Path, args: &[&str]) -> String {
@@ -81,7 +85,14 @@ fn init_creates_the_layout() {
         assert!(lib.join(file).is_file(), "missing {file}");
     }
     let config = read(lib.join("stemma.toml"));
-    assert!(config.contains("\"bob\" = { roles = [\"maintainer\", \"signer\"] }"));
+    assert!(config.contains("\"bob\" = { roles = [\"maintainer\", \"signer\"], keys = [] }"));
+    let workflow = read(lib.join(".github/workflows/stemma.yml"));
+    assert!(workflow.contains("run: stemma verify"));
+    assert!(workflow.contains("fetch-depth: 0"));
+    assert!(
+        !workflow.contains("token"),
+        "verifying must not need the forge"
+    );
     assert!(config.contains("name = \"GroupTheory\""));
     assert!(config.contains("title = \"Groups\""));
     let lakefile = read(lib.join("lakefile.toml"));
@@ -191,7 +202,8 @@ fn upgrade_moves_an_old_library_to_this_version() {
     );
     let plan: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(plan["from"], "0.1.0");
-    assert_eq!(plan["migrations"].as_array().unwrap().len(), 2);
+    // From 0.1.0: two migrations of 0.2.0, and one of 0.3.0.
+    assert_eq!(plan["migrations"].as_array().unwrap().len(), 3);
     assert!(read(dir.join("stemma.toml")).contains("self_merge"));
 
     let out = stemma(&dir, &["upgrade", "--no-update"]);
@@ -202,8 +214,9 @@ fn upgrade_moves_an_old_library_to_this_version() {
     );
     let config = read(dir.join("stemma.toml"));
     assert!(config.contains(&format!("stemma = \"{}\"", env!("CARGO_PKG_VERSION"))));
-    assert!(config.contains("merge_without_approval = [\"signer\"]"));
+    // 0.2.0 renamed the key, and 0.3.0 removed it.
     assert!(!config.contains("self_merge"));
+    assert!(!config.contains("merge_without_approval"));
     assert!(read(dir.join("AGENTS.md")).contains("Working in a Stemma library"));
     assert!(!read(dir.join("lean-toolchain")).contains("v4.20.0"));
     assert!(dir.join(".github/workflows/stemma.yml").is_file());
@@ -254,5 +267,150 @@ fn upgrade_on_main_goes_to_a_branch_of_its_own() {
     assert_eq!(
         git(&dir, &["log", "-1", "--format=%s"]),
         format!("Upgrade to stemma {}", env!("CARGO_PKG_VERSION"))
+    );
+}
+
+/// Makes an SSH key pair, returning the private key's path and the public key.
+fn ssh_key(dir: &Path, name: &str) -> (String, String) {
+    let path = dir.join(name);
+    let out = Command::new("ssh-keygen")
+        .args(["-q", "-t", "ed25519", "-N", "", "-C", name, "-f"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let public = read(path.with_extension("pub"));
+    (path.display().to_string(), public.trim().to_string())
+}
+
+/// The content an approval of HEAD names: git's digest of every file but
+/// signatures, as `stemma` computes it.
+fn content_id(dir: &Path) -> String {
+    let listing = git(dir, &["ls-tree", "-r", "--full-tree", "HEAD"]);
+    let content: String = listing
+        .lines()
+        .filter(|l| !l.split_once('\t').unwrap().1.starts_with("signatures/"))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    let mut child = Command::new("git")
+        .args(["hash-object", "--stdin"])
+        .current_dir(dir)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    use std::io::Write;
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(content.as_bytes())
+        .unwrap();
+    String::from_utf8_lossy(&child.wait_with_output().unwrap().stdout)
+        .trim()
+        .to_string()
+}
+
+/// Makes an empty commit approving `kinds` of HEAD's content, signed with `key`.
+fn approve(dir: &Path, key: &str, kinds: &str) {
+    let content = content_id(dir);
+    git(
+        dir,
+        &[
+            "-c",
+            "gpg.format=ssh",
+            "-c",
+            &format!("user.signingkey={key}"),
+            "commit",
+            "--quiet",
+            "--allow-empty",
+            "-S",
+            "-m",
+            "Approve the change",
+            "-m",
+            &format!("Approve: {kinds}\nApprove-content: {content}"),
+        ],
+    );
+}
+
+fn verify(dir: &Path) -> serde_json::Value {
+    let out = stemma(dir, &["verify", "--no-build", "--base", "main", "--json"]);
+    serde_json::from_slice(&out.stdout)
+        .unwrap_or_else(|_| panic!("{}", String::from_utf8_lossy(&out.stderr)))
+}
+
+#[test]
+fn approvals_are_signed_commits_checked_against_members_keys() {
+    let dir = scratch("approvals");
+    let keys = scratch("approvals-keys");
+    let (alice, alice_public) = ssh_key(&keys, "alice");
+    let (mallory, _) = ssh_key(&keys, "mallory");
+    let out = stemma(
+        &dir,
+        &["init", ".", "--name", "Alg", "--no-mathlib", "--commit"],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // On main, alice is the only maintainer, with her key.
+    let config = read(dir.join("stemma.toml"));
+    let library = &config[..config.find("[members]").unwrap()];
+    std::fs::write(
+        dir.join("stemma.toml"),
+        format!(
+            "{library}[members]\nalice = {{ roles = [\"maintainer\", \"signer\"], keys = [\"{alice_public}\"] }}\n"
+        ),
+    )
+    .unwrap();
+    git(
+        &dir,
+        &["commit", "--quiet", "-am", "Alice is the maintainer"],
+    );
+
+    // A change of the policy needs a maintainer's approval.
+    git(&dir, &["switch", "--quiet", "--create", "change"]);
+    let config = read(dir.join("stemma.toml")) + "bob = { roles = [\"signer\"] }\n";
+    std::fs::write(dir.join("stemma.toml"), config).unwrap();
+    git(&dir, &["commit", "--quiet", "-am", "Add bob"]);
+    let v = verify(&dir);
+    assert_eq!(v["ok"], false);
+    assert_eq!(v["missing"][0]["kind"], "approval");
+    assert_eq!(v["missing"][0]["change"], "policy");
+
+    // An approval signed with a key no member has does not count.
+    approve(&dir, &mallory, "policy");
+    let v = verify(&dir);
+    assert_eq!(v["ok"], false);
+    let failures = v["failures"].to_string();
+    assert!(
+        failures.contains("not signed with the key of a member"),
+        "{failures}"
+    );
+
+    // Alice's approval does.
+    approve(&dir, &alice, "policy");
+    let v = verify(&dir);
+    assert!(
+        v["approvals"]["policy"].to_string().contains("alice"),
+        "{v}"
+    );
+    assert!(
+        !v["missing"].to_string().contains("approval"),
+        "alice approved: {v}"
+    );
+
+    // A change of content after it withdraws the approval.
+    std::fs::write(dir.join("README.md"), "changed\n").unwrap();
+    git(&dir, &["commit", "--quiet", "-am", "Change the README"]);
+    let v = verify(&dir);
+    assert!(
+        v["missing"].to_string().contains("\"change\":\"policy\""),
+        "{v}"
     );
 }

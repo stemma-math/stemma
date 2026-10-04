@@ -89,6 +89,9 @@ prose and the notes only.\n\n{formal}\n"
 fn translate(translator: Translator, model: Option<&str>, text: &str) -> Result<String> {
     let empty = std::env::temp_dir().join(format!("stemma-readback-{}", std::process::id()));
     std::fs::create_dir_all(&empty)?;
+    // Codex writes its final answer to a file of its own.
+    let answer = empty.join("answer.md");
+    let _ = std::fs::remove_file(&answer);
     let mut command = match translator {
         Translator::Claude => {
             let mut c = Command::new("claude");
@@ -101,6 +104,7 @@ fn translate(translator: Translator, model: Option<&str>, text: &str) -> Result<
         Translator::Codex => {
             let mut c = Command::new("codex");
             c.args(["exec", "--sandbox", "read-only", "--skip-git-repo-check"]);
+            c.arg("--output-last-message").arg(&answer);
             if let Some(m) = model {
                 c.args(["--model", m]);
             }
@@ -122,17 +126,12 @@ fn translate(translator: Translator, model: Option<&str>, text: &str) -> Result<
             String::from_utf8_lossy(&output.stderr)
         );
     }
-    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    // `codex exec` repeats its final answer after the transcript; keep that.
     Ok(match translator {
-        Translator::Codex => text
-            .rsplit_once("tokens used")
-            .map_or(text.clone(), |(_, tail)| {
-                tail.lines().skip(2).collect::<Vec<_>>().join("\n")
-            })
+        Translator::Claude => String::from_utf8_lossy(&output.stdout).trim().to_string(),
+        Translator::Codex => std::fs::read_to_string(&answer)
+            .context("reading Codex's answer")?
             .trim()
             .to_string(),
-        Translator::Claude => text,
     })
 }
 

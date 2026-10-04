@@ -7,6 +7,7 @@ mod commands;
 mod config;
 mod help;
 mod init;
+mod keys;
 mod lake;
 mod library;
 mod readback;
@@ -107,7 +108,12 @@ enum Commands {
         port: u16,
     },
     /// Bring `main` in, and open or update the pull request.
-    Share,
+    Share {
+        /// Share even when the pull request lacks signatures or approvals you
+        /// could give it.
+        #[arg(long)]
+        anyway: bool,
+    },
     /// Make blind read-backs of environments' Lean, and show them beside their prose.
     Readback {
         /// Read back these labels. By default, every central environment
@@ -132,20 +138,25 @@ enum Commands {
         #[arg(long, default_value_t = 8001)]
         port: u16,
     },
-    /// Sign central environments, in your own terminal.
+    /// Sign central environments and approve changes, in your own terminal.
     Sign {
         /// Sign only these labels.
         labels: Vec<String>,
+        /// The base the change is compared with, for approvals.
+        #[arg(long, default_value = "origin/main")]
+        base: String,
         /// Write the signature files without committing them.
         #[arg(long)]
         no_commit: bool,
     },
-    /// Check what the forge requires of a pull request: signatures and policy.
+    /// Check that a change carries the signatures and approvals it needs.
     Verify {
-        /// The base to compare with. By default, the pull request's base, or
-        /// `origin/main`.
+        /// The base the change is compared with. By default, `origin/main`.
         #[arg(long)]
         base: Option<String>,
+        /// Check only signatures and approvals, without building the library.
+        #[arg(long)]
+        no_build: bool,
     },
     /// Move the library to this version of stemma.
     Upgrade {
@@ -288,9 +299,13 @@ fn main() -> ExitCode {
             },
             cli.json,
         ),
-        Commands::Share => share::share(cli.json),
-        Commands::Sign { labels, no_commit } => sign::sign(labels, !no_commit),
-        Commands::Verify { base } => verify::verify(base, cli.json),
+        Commands::Share { anyway } => share::share(anyway, cli.json),
+        Commands::Sign {
+            labels,
+            base,
+            no_commit,
+        } => sign::sign(labels, base, !no_commit),
+        Commands::Verify { base, no_build } => verify::verify(base, !no_build, cli.json),
         Commands::Upgrade {
             dry_run,
             no_update,

@@ -122,20 +122,19 @@ def validLabel (label : String) : Bool :=
   | c :: cs =>
     (c.isLower || c.isDigit) && cs.all fun c => c.isLower || c.isDigit || c == '-' || c == '.'
 
-/-- The last components of the declarations Lean generates for an inductive type. -/
-def generatedSuffixes : List String :=
-  ["noConfusionType", "ctorIdx", "sizeOf_spec", "inj", "injEq", "eq_def"]
-
-/-- Whether a declaration is one a person wrote, rather than one Lean generated. -/
+/--
+Whether a declaration is one a person wrote, as Lean itself tells: not
+internal, and not a recursor, constructor, projection, matcher or other
+auxiliary declaration Lean makes for one. Lemmas Lean derives for a type and
+records under the type's name (such as `injEq`) are kept: they are part of what
+the environment adds, and Lean marks them no differently.
+-/
 def isUserDecl (env : Environment) (n : Name) : Bool :=
-  let generatedName := match n with
-    | .str _ s => generatedSuffixes.contains s || s.startsWith "eq_"
-    | _ => false
   let generatedKind := match env.find? n with
     | some (.ctorInfo _) | some (.recInfo _) => true
     | _ => false
-  !n.isInternal && !generatedName && !generatedKind && !isAuxRecursor env n &&
-    !isNoConfusion env n && !isMatcherCore env n && !(env.isProjectionFn n)
+  !n.isInternal && !generatedKind && !isAuxRecursor env n && !isNoConfusion env n &&
+    !isMatcherCore env n && !(env.isProjectionFn n)
 
 /--
 The source of an environment's blocks: those of Lean code when `lean` is true,
@@ -212,8 +211,10 @@ def expandEnvironment (name : Name) (display : String) (base : BaseKind) (marks 
     if !before.contains n && isUserDecl env n then
       let pos := (← findDeclarationRanges? n).map (·.range.pos) |>.getD ⟨0, 0⟩
       added := added.push (pos, n)
+  -- In source order; declarations Lean makes at the same place, by name.
   let decls := added.qsort (fun a b => a.1.line < b.1.line ||
-    (a.1.line == b.1.line && a.1.column < b.1.column)) |>.map (·.2)
+    (a.1.line == b.1.line && (a.1.column < b.1.column ||
+      (a.1.column == b.1.column && Name.lt a.2 b.2)))) |>.map (·.2)
   checkDecls marks decls
   let line := (← getFileMap).toPosition (ref.getPos?.getD 0) |>.line
   modifyEnv (recordExt.addEntry · {

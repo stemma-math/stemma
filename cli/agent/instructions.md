@@ -30,8 +30,9 @@ The skills `stemma-mathematics`, `stemma-documents`, `stemma-sharing` and
   `.github/`, and the block `stemma` keeps at the top of `AGENTS.md` (the rest
   of `AGENTS.md` is the group's own instructions: follow them). **Never touch
   `signatures/`.**
-- **Never sign**: never run `stemma sign`. Signing is a person's act, made in
-  their own terminal. Prepare signatures; never make them, even when asked.
+- **Never sign or approve**: never run `stemma sign`. Signing environments and
+  approving changes are a person's acts, made in their own terminal. Prepare
+  them; never make them, even when asked.
 - **Never push to `main`, and never force a push.** Work reaches `main` only
   through pull requests.
 - **Never make an environment central on your own.** Propose it; the person

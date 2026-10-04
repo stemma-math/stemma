@@ -63,6 +63,9 @@ Who writes each entry:
 
 - `<Library>.lean` imports every module of the library, each exactly once.
   `stemma check` fails when a module is missing.
+- It has a fixed form, so that `stemma` reads it exactly as Lean does: it
+  begins with its imports, one `import <Module>` per line (blank lines between
+  them are allowed), and nothing else comes before its first command.
 - The order of its imports is the order in which the site presents the
   modules. Lean ignores that order, so it is free for the reader. Nesting
   comes from module names: siblings appear in the order in which the first of
@@ -110,18 +113,20 @@ command line's, and says which of the two to change.
 [library]
 name = "Algebra"            # the library's Lean name
 title = "Algebra"           # the site's title
-stemma = "0.1.0"            # the stemma version, which fixes Lean, Verso and Mathlib
+stemma = "0.3.0"            # the stemma version, which fixes Lean, Verso and Mathlib
 
 [members]
-alice = { roles = ["maintainer", "signer"] }
+alice = { roles = ["maintainer", "signer"], keys = ["ssh-ed25519 AAAA…"] }
 
-[policy]                    # optional (§4)
-[signatures]                # optional (§3)
+[policy.review]             # optional (§4)
 ```
 
-`stemma init` makes the person who creates the library its first member, as
-maintainer and signer, so that someone can approve the changes the policy
-reserves to maintainers.
+- A member is who signs with one of their **keys**: the SSH public keys listed
+  for them. Their name is how the library refers to them; it need not be a
+  forge account.
+- `stemma init` makes the person who creates the library its first member, as
+  maintainer and signer, with the key git signs with, so that someone can
+  approve the changes the policy reserves to maintainers.
 
 ### Not committed
 
@@ -333,6 +338,10 @@ changes need a signature:
 - making a signed environment not central;
 - changing a signed environment's label or its `cited` mark.
 
+A signature that applies to no central environment any more (because the
+environment was removed, made not central, or relabelled) must be withdrawn by
+a signer, with `stemma sign`, in the same change.
+
 Everything else goes in without one: new central environments (unsigned
 until someone signs them), proofs of signed statements, dark work outside
 every signed closure, prose outside environments, and environments that are
@@ -340,18 +349,11 @@ not central.
 
 ### Who signs
 
-- Any member with the `signer` role may sign.
-- The person who directed a change may sign it: a signature guarantees that a
-  person checked the correspondence, not that a second person did. A group
-  that wants a second pair of eyes says so in `stemma.toml`:
-
-  ```toml
-  [signatures]
-  distinct_from_author = true   # the signer cannot be the pull request's author
-  ```
-
-- A signature records who signed and, when there was one, which agent proposed
-  the change (from the commit trailers).
+- Any member with the `signer` role may sign, including the person who
+  directed the change: a signature guarantees that a person checked the
+  correspondence.
+- A signature records the member who signed, and, when there was one, which
+  agent proposed the change (from the commit trailers).
 
 ### How a signature is made
 
@@ -360,20 +362,21 @@ machine with their credentials, so the aim is not to stop a malicious agent,
 but to make sure that neither an agent's shortcut nor a person's offhand
 "sign it for me" can produce a signature.
 
-- A signer runs `stemma sign` in their own terminal. It shows what awaits a
-  signature, grouped by cause: for each environment, its prose, its Lean
-  statement and what changed since its last signature.
-  The signer confirms each group explicitly.
-- `stemma sign` writes the files in `signatures/` and makes a commit signed
-  with the signer's SSH or GPG key, which goes into the pull request.
+- A signer runs `stemma sign` in their own terminal. It shows what awaits
+  them, grouped by cause: for each environment, its prose, its Lean statement
+  and what changed since its last signature; and the changes on the branch
+  that need their approval (§4). They confirm each group explicitly.
+- `stemma sign` writes the files in `signatures/` and records the approvals in
+  one commit, signed with the person's key.
 - Three barriers keep agents out:
   1. `stemma sign` runs only in an interactive terminal, which agents' shell
      tools are not;
   2. the agents `stemma` starts are not allowed to run it;
-  3. the pull request's checks accept a change to `signatures/` only in
-     commits that touch nothing else and are signed with the key of a
-     member with the `signer` role.
-- Agents prepare signatures but never make them: when a pull request needs
+  3. `stemma verify` accepts a change to `signatures/` only in commits that
+     touch nothing else and are signed with the key of a member with the
+     `signer` role, as listed in `stemma.toml` on `main`. Git checks the
+     signature; no forge is involved.
+- Agents prepare signatures but never make them: when a change needs
   signatures, the agent tells the person which ones, and why.
 
 ### Signature files
@@ -387,7 +390,7 @@ kind = "statement"
 central = true
 # cited = "Key2001, Prop 3.4"
 
-signer = "alice"                  # the signer's forge account
+signer = "alice"                  # the member who signed
 signed = 2026-10-04T18:20:00Z
 agent = "claude-opus-5-5"         # the agent that proposed the change, if any
 
@@ -405,7 +408,8 @@ formal = "sha256:…"
 ```
 
 - `signer` and `signed` are informative: the proof of who signed is the
-  commit's signature, and the checks require the two to agree.
+  commit's signature, made with the member's key, and the checks require the
+  two to agree.
 - `version` names the fingerprint algorithm, so that changing it never makes
   signatures stale silently: `stemma` computes every version, and migrates
   signatures explicitly.
@@ -451,6 +455,11 @@ checks.
   is new there, resolves conflicts (asking the person, in mathematical terms,
   when two changes disagree about content) and opens or updates a pull request
   from the working branch.
+- Before it pushes, sharing works out what the change will lack. What the
+  person can give (a signature or an approval of theirs) stops it: they run
+  `stemma sign` first, so that the checks do not fail for it. What only
+  someone else can give is reported once the pull request is open.
+- Sharing from `main` moves the work to a working branch first.
 - `stemma status` says how far a branch is from `main`, as information. It
   never forces a synchronization.
 - When part of a branch needs a signature and part does not, the agent offers
@@ -471,44 +480,45 @@ checks.
 A pull request that would leave a signed environment stale says which
 signatures it needs, and is not merged until they are added to it.
 
-### Group policy
+### Approvals
 
-Each group decides, in `stemma.toml`, who may merge which pull requests:
+Some changes need a member's approval before they reach `main`. Each group
+decides which, in `stemma.toml`:
 
 ```toml
-[members]
-alice = { roles = ["maintainer", "signer"] }
-bob   = { roles = ["signer"] }
-carol = { roles = [] }
-
-[policy]
-# Who may merge their pull requests without another member's approval, once
-# every check passes.
-merge_without_approval = ["maintainer", "signer"]
-
-# Which kinds of change also need the approval of another member with one of
-# these roles.
 [policy.review]
-new-central = ["signer"]
-policy      = ["maintainer"]
+dependencies = ["maintainer"]   # lakefile.toml, lake-manifest.json, lean-toolchain
+policy       = ["maintainer"]   # stemma.toml, .github/
 ```
 
-- Merging is always a person's act: nothing is merged by itself.
-- A pull request whose author is in `merge_without_approval` may be merged
-  once every check passes. Otherwise it also needs the approval of a member
-  with one of those roles.
-- `policy.review` names kinds of change, computed from the content of the
-  pull request (for example `new-central`, a new central environment, or
-  `dependencies`, a change of versions), and the roles whose approval they
-  need.
-- Signatures are not reviews: a signature is about an environment, a review
-  about a pull request. A pull request may need both, or neither.
-- **The policy is always read from `main`, never from the pull request**, so
-  that a pull request cannot change the policy that judges it. A change to
-  `stemma.toml` always needs a maintainer's approval (`policy`), and that
-  cannot be turned off.
-- By default every member is in `merge_without_approval`, and only `policy`
-  needs a review.
+- `policy.review` names kinds of change and the roles whose approval they
+  need. A change's kinds come from the files it touches, exactly; there is no
+  other way a change gets a kind.
+- A change of the `policy` kind (the members, their keys and roles, the
+  policy, the version of `stemma`, the forge's checks) always needs a
+  maintainer's approval, and that cannot be turned off.
+- A change of the `dependencies` kind needs a maintainer's approval unless the
+  group says otherwise (`dependencies = []`): a new dependency is code that
+  every member's machine will build and run.
+- **An approval is a signed commit**, not a forge's review. `stemma sign`
+  records it: an empty commit, or the commit of the signatures made at the
+  same time, signed with the member's key, with a trailer naming the kinds it
+  approves (`Approve: policy, dependencies`).
+- **An approval names the content it approves**: a digest, made by git, of
+  every file of the branch but signatures (`Approve-content:`). It counts only
+  while that is the branch's content; any other change of content (a new
+  commit, bringing in `main`, a rebase) leaves it behind, and it is given
+  again.
+- Any member with one of the roles may approve, including the one who made
+  the change: an approval guarantees that a person looked at it.
+- **The members and the policy are always read from `main`, never from the
+  change**, so that a change cannot alter what judges it: a new member cannot
+  approve the change that adds them.
+- Signatures are not approvals: a signature is about an environment and lasts
+  as long as the environment does; an approval is about a change. A change
+  may need both, or neither. `stemma sign` makes both in one act.
+- Merging is always a person's act: nothing is merged by itself, and once a
+  change carries what it needs, anyone with permission on the forge merges it.
 
 ### Forges
 
@@ -518,12 +528,12 @@ The first forge Stemma supports is GitHub:
 |---|---|
 | `main` changes only through pull requests | A ruleset on `main`: pull requests required, no direct or forced pushes |
 | Required checks | A GitHub Actions workflow written by `stemma` (`.github/workflows/stemma.yml`) that runs `stemma check` and `stemma verify`, marked as a required status check |
-| Required reviews | GitHub approvals, whose authors the policy check matches against roles |
-| The policy read from `main` | The policy job reads `stemma.toml` from the base commit |
+| Signatures and approvals | Signed commits, checked by `stemma verify` with git against the members' keys: GitHub's reviews play no part |
 | The library's site | GitHub Pages, published from `main` by the same workflow |
 
-- The build compiles the pull request's code, so it runs without secrets. The
-  policy job runs nothing from the pull request.
+- The checks run without secrets: `stemma verify` reads only the repository,
+  so it gives the same answer on GitHub, on any other forge, and on a
+  person's machine.
 - Builds cache `.lake` between runs.
 - `stemma` sets the repository up (rules, workflow, Pages) when it creates the
   library.
@@ -569,8 +579,8 @@ The first forge Stemma supports is GitHub:
 | `stemma preview` | Builds the site and serves it locally |
 | `stemma share` | Brings `main` in, and opens or updates the pull request |
 | `stemma upgrade` | Moves the library to this version of `stemma`: migrations, the files only `stemma` writes, and the dependencies |
-| `stemma verify` | What the forge requires of a pull request beyond `stemma check`: signatures and the group's policy |
-| `stemma sign` | Signs, in an interactive terminal |
+| `stemma verify` | Whether a change carries the signatures and approvals it needs, from git alone |
+| `stemma sign` | Signs environments and approves changes, in an interactive terminal |
 | `stemma readback` | Makes read-backs and shows them in a local web page |
 | `stemma claude`, `stemma codex` | Start an equipped agent |
 

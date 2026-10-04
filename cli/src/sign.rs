@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
-use crate::agent::{self, SESSION_VARIABLE};
+use crate::agent::SESSION_VARIABLE;
 use crate::library::Library;
 use crate::report::{Environment, Signature};
 
@@ -145,9 +145,10 @@ fn proposing_agent(library: &Library, module: &str) -> Option<String> {
     (!agent.is_empty()).then_some(agent)
 }
 
-/// `stemma sign`: shows what awaits a signature, grouped by cause, and signs
-/// what the person confirms.
-pub fn sign(labels: Vec<String>, commit: bool) -> Result<bool> {
+/// `stemma sign`: shows what awaits the person's act, and records what they
+/// confirm: signatures of central environments, and approvals of the change
+/// on this branch, in one commit signed with their key.
+pub fn sign(labels: Vec<String>, base: String, commit: bool) -> Result<bool> {
     if std::env::var_os(SESSION_VARIABLE).is_some() {
         bail!(
             "signing is a person's act: run `stemma sign` in your own terminal, not in an agent's session"
@@ -157,19 +158,19 @@ pub fn sign(labels: Vec<String>, commit: bool) -> Result<bool> {
         bail!("`stemma sign` runs only in an interactive terminal");
     }
     let library = Library::find(Path::new("."))?;
-    if commit {
-        let key = Command::new("git")
-            .args(["config", "user.signingkey"])
-            .current_dir(&library.dir)
-            .output()?;
-        if String::from_utf8_lossy(&key.stdout).trim().is_empty() {
-            bail!(
-                "signatures are committed signed with your key, and git has none configured. \
-                 With an SSH key, for example:\n  git config --global gpg.format ssh\n  \
-                 git config --global user.signingkey ~/.ssh/id_ed25519.pub"
-            );
-        }
-    }
+    let Some(key) = crate::keys::signing_key(&library.dir) else {
+        bail!(
+            "you sign with your key, and git has none configured. With an SSH key, for \
+             example:\n  git config --global gpg.format ssh\n  \
+             git config --global user.signingkey ~/.ssh/id_ed25519.pub"
+        );
+    };
+    let Some(member) = library.config.member_with_key(&key).map(str::to_string) else {
+        bail!(
+            "your signing key ({key}) is not the key of any member in stemma.toml: a \
+             maintainer adds it, in a change of the policy"
+        );
+    };
     cliclack::intro(crate::ui::bold(" stemma sign "))?;
     let spinner = cliclack::spinner();
     spinner.start("Building the library and reading its state");
@@ -182,11 +183,16 @@ pub fn sign(labels: Vec<String>, commit: bool) -> Result<bool> {
             return Ok(false);
         }
     };
+    let verdict = crate::verify::evaluate(&library, &base, Some(&report))?;
+    let is_signer = verdict.base_config.has_role(&member, &["signer".into()])
+        || library.config.has_role(&member, &["signer".into()]);
+
+    // Environments to sign.
     let mut groups: BTreeMap<String, Vec<&Environment>> = BTreeMap::new();
     let mut unformalized = Vec::new();
     for env in &report.environments {
         let state = env.signature(&library.dir);
-        if !matches!(state, Some(Signature::Unsigned | Signature::Stale)) {
+        if !is_signer || !matches!(state, Some(Signature::Unsigned | Signature::Stale)) {
             continue;
         }
         let label = env.record.label.clone().unwrap_or_default();
@@ -202,17 +208,42 @@ pub fn sign(labels: Vec<String>, commit: bool) -> Result<bool> {
             .or_default()
             .push(env);
     }
+    // Signatures that apply to no central environment any more.
+    let to_withdraw: Vec<String> = if is_signer {
+        verdict
+            .missing
+            .iter()
+            .filter_map(|m| match m {
+                crate::verify::Missing::Withdrawal { label } => Some(label.clone()),
+                _ => None,
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    // Changes to approve.
+    let to_approve: Vec<String> = verdict
+        .missing
+        .iter()
+        .filter(|m| m.can_supply(&verdict.base_config, &member))
+        .filter_map(|m| match m {
+            crate::verify::Missing::Approval { change, .. } => Some(change.clone()),
+            _ => None,
+        })
+        .collect();
+
     if !unformalized.is_empty() {
         cliclack::log::warning(format!(
             "Not formalized yet, so they cannot be signed: {}.",
             unformalized.join(", ")
         ))?;
     }
-    if groups.is_empty() {
-        cliclack::outro("Nothing awaits a signature.")?;
+    if groups.is_empty() && to_approve.is_empty() && to_withdraw.is_empty() {
+        cliclack::outro(format!(
+            "Nothing awaits your signature or approval, {member}."
+        ))?;
         return Ok(true);
     }
-    let signer = agent::person();
     let signed = now_utc();
     let mut written = Vec::new();
     for (reason, envs) in &groups {
@@ -249,40 +280,128 @@ pub fn sign(labels: Vec<String>, commit: bool) -> Result<bool> {
             let label = env.record.label.as_deref().unwrap_or_default();
             let by = proposing_agent(&library, &env.record.module);
             let path = dir.join(format!("{label}.toml"));
-            std::fs::write(&path, signature_file(env, &signer, &signed, by.as_deref()))?;
+            std::fs::write(&path, signature_file(env, &member, &signed, by.as_deref()))?;
             written.push(label.to_string());
         }
     }
-    if written.is_empty() {
-        cliclack::outro("Nothing was signed.")?;
+    let mut withdrawn = Vec::new();
+    if !to_withdraw.is_empty() {
+        cliclack::log::step(crate::ui::bold(format!(
+            "Signatures that apply to no central environment ({})",
+            to_withdraw.len()
+        )))?;
+        cliclack::note(
+            "Removed, made not central, or relabelled",
+            to_withdraw.join("\n"),
+        )?;
+        if cliclack::confirm(format!(
+            "Withdraw these {}? The library no longer claims what they signed.",
+            to_withdraw.len()
+        ))
+        .initial_value(false)
+        .interact()?
+        {
+            withdrawn = to_withdraw;
+        }
+    }
+    let mut approved = Vec::new();
+    if !to_approve.is_empty() {
+        cliclack::log::step(crate::ui::bold(format!(
+            "Changes to approve: {}",
+            to_approve.join(", ")
+        )))?;
+        let dirty = Command::new("git")
+            .args(["status", "--porcelain", "--", ".", ":!signatures"])
+            .current_dir(&library.dir)
+            .output()?;
+        if !dirty.stdout.is_empty() {
+            cliclack::log::warning(
+                "There are uncommitted changes: they are not part of what you approve.",
+            )?;
+        }
+        let stat = Command::new("git")
+            .args(["diff", "--stat", &format!("{base}...HEAD")])
+            .current_dir(&library.dir)
+            .output()?;
+        cliclack::note(
+            format!("What this branch changes, against {base}"),
+            String::from_utf8_lossy(&stat.stdout).trim_end(),
+        )?;
+        if cliclack::confirm(format!(
+            "Approve this change ({})? Only if you have looked at it.",
+            to_approve.join(", ")
+        ))
+        .initial_value(false)
+        .interact()?
+        {
+            approved = to_approve;
+        }
+    }
+    if written.is_empty() && approved.is_empty() && withdrawn.is_empty() {
+        cliclack::outro("Nothing was signed or approved.")?;
         return Ok(true);
     }
-    if commit {
-        let files: Vec<String> = written
-            .iter()
-            .map(|l| format!("signatures/{l}.toml"))
-            .collect();
+    if !commit {
+        if !approved.is_empty() {
+            cliclack::log::warning(
+                "Approvals are recorded in a commit: with --no-commit, none is.",
+            )?;
+        }
+        cliclack::outro(format!("Signed (not committed): {}.", written.join(", ")))?;
+        return Ok(true);
+    }
+    let files: Vec<String> = written
+        .iter()
+        .chain(&withdrawn)
+        .map(|l| format!("signatures/{l}.toml"))
+        .collect();
+    for l in &withdrawn {
+        std::fs::remove_file(library.dir.join("signatures").join(format!("{l}.toml")))?;
+    }
+    let mut subject = Vec::new();
+    if !written.is_empty() {
+        subject.push(format!("Sign {}", written.join(", ")));
+    }
+    if !withdrawn.is_empty() {
+        subject.push(format!("withdraw {}", withdrawn.join(", ")));
+    }
+    if !approved.is_empty() {
+        subject.push(format!("approve the change ({})", approved.join(", ")));
+    }
+    let mut summary = subject.join("; ");
+    if let Some(first) = summary.get(..1) {
+        summary = first.to_uppercase() + &summary[1..];
+    }
+    let mut message = summary.clone();
+    if !approved.is_empty() {
+        // The approval names the content it approves: the committed content of
+        // the branch, which the signatures in this commit do not change.
+        let content = crate::verify::content_id(&library.dir, "HEAD")?;
+        message.push_str(&format!(
+            "\n\nApprove: {}\nApprove-content: {content}\nApproved-by: {member}",
+            approved.join(", ")
+        ));
+    }
+    if !files.is_empty() {
         let added = Command::new("git")
-            .arg("add")
+            .args(["add", "--all", "--"])
             .args(&files)
             .current_dir(&library.dir)
             .status()?;
         anyhow::ensure!(added.success(), "could not stage the signatures");
-        let message = format!("Sign {}", written.join(", "));
-        let committed = Command::new("git")
-            .args(["commit", "-S", "--quiet", "-m", &message, "--"])
-            .args(&files)
-            .current_dir(&library.dir)
-            .status()
-            .context("running `git commit`")?;
-        anyhow::ensure!(
-            committed.success(),
-            "the signature files are written, but committing them failed"
-        );
-        cliclack::outro(format!("Signed and committed: {}.", written.join(", ")))?;
-    } else {
-        cliclack::outro(format!("Signed (not committed): {}.", written.join(", ")))?;
     }
+    let mut git_commit = Command::new("git");
+    git_commit
+        .args(["commit", "-S", "--quiet", "-m", &message])
+        .current_dir(&library.dir);
+    if files.is_empty() {
+        git_commit.arg("--allow-empty");
+    } else {
+        git_commit.arg("--").args(&files);
+    }
+    let committed = git_commit.status().context("running `git commit`")?;
+    anyhow::ensure!(committed.success(), "committing failed");
+    cliclack::outro(format!("{summary}. Committed, signed with your key."))?;
     Ok(true)
 }
 

@@ -197,6 +197,7 @@ pub fn init(options: Options, json_output: bool) -> Result<()> {
     // The person creating the library is its first member, so that someone can
     // approve the changes the policy reserves to maintainers.
     let creator = crate::agent::person();
+    let my_key = crate::keys::signing_key(Path::new("."));
     let mut members = vec![ask.text(None, "Your account on the forge", &creator)?];
     let others = if options.members.is_empty() {
         ask.optional(None, "Other members' accounts, separated by commas", "none")?
@@ -256,7 +257,11 @@ pub fn init(options: Options, json_output: bool) -> Result<()> {
         "stemma_path": stemma_path.map(|p| p.display().to_string()),
         "mathlib": mathlib,
         "mathlib_rev": mathlib_rev(),
-        "members": members,
+        "members": members.iter().enumerate().map(|(i, name)| json!({
+            "name": name,
+            // The person creating the library signs with the key git signs with.
+            "keys": if i == 0 { my_key.iter().cloned().collect::<Vec<_>>() } else { vec![] },
+        })).collect::<Vec<_>>(),
     });
     for sub in [name.as_str(), ".github/workflows"] {
         std::fs::create_dir_all(dir.join(sub))

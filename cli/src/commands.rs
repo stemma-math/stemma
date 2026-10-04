@@ -105,7 +105,10 @@ pub fn new(options: NewOptions, json_output: bool) -> Result<()> {
 /// Problems in the table of contents that only the files on disk show.
 fn disk_diagnostics(library: &Library) -> Result<Vec<String>> {
     let on_disk = library.modules_on_disk()?;
-    let listed = library.table_of_contents()?;
+    let listed = match library.table_of_contents() {
+        Ok(listed) => listed,
+        Err(error) => return Ok(vec![format!("{}.lean, {error:#}.", library.name())]),
+    };
     let mut out = Vec::new();
     for m in &on_disk {
         if !listed.contains(m) {

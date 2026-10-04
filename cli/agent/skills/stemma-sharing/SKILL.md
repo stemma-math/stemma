@@ -35,8 +35,12 @@ branch and opens or updates the pull request. Its answer says what happened:
   commit, and share again.
 - `pull_request`: the pull request's address. When it is empty, `gh` could
   not open it: tell the person.
-- `needs_signatures`: signed environments the pull request leaves stale. It
-  will not be merged until they are signed (see `stemma-signatures`).
+- `needs_you`: what the change lacks that the person can give: their
+  signature of an environment, or their approval of the change (a change of
+  the policy, of versions…). Nothing was pushed. Tell them what it is and why,
+  and ask them to run `stemma sign` in their own terminal; then share again.
+- `needs_others`: what only someone else can give. The pull request is open;
+  tell the person whose signature or approval it waits for.
 
 If part of the work needs signatures and part does not, offer to split it into
 two pull requests, so that the second waits without holding back the first.
