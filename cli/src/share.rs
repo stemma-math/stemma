@@ -43,9 +43,12 @@ struct Outcome {
     checks: Option<Checks>,
     pushed: bool,
     pull_request: Option<String>,
-    /// Central environments the pull request leaves unsigned or stale.
+    /// Central environments not signed yet (nothing waits for them).
     unsigned: Vec<String>,
-    stale: Vec<String>,
+    /// What the change lacks that the person can supply with `stemma sign`.
+    needs_you: Vec<String>,
+    /// What the change lacks that only someone else can supply.
+    needs_others: Vec<String>,
 }
 
 /// Opens the pull request from `branch` to `main`, or finds the open one.
@@ -80,7 +83,7 @@ fn pull_request(dir: &Path, branch: &str) -> Option<String> {
 
 /// Shares the working branch: checks, brings `main` in, checks again, pushes,
 /// and opens or updates the pull request.
-fn share_branch(library: &Library, json_output: bool) -> Result<Outcome> {
+fn share_branch(library: &Library, anyway: bool, json_output: bool) -> Result<Outcome> {
     let dir = &library.dir;
     let Some(mut branch) = crate::branches::current(dir) else {
         bail!("share from a branch: HEAD is on none");
@@ -109,7 +112,8 @@ fn share_branch(library: &Library, json_output: bool) -> Result<Outcome> {
         pushed: false,
         pull_request: None,
         unsigned: Vec::new(),
-        stale: Vec::new(),
+        needs_you: Vec::new(),
+        needs_others: Vec::new(),
     };
     git_ok(dir, &["fetch", "--quiet", "origin"])?;
     let has_main = git(dir, &["rev-parse", "--verify", "--quiet", "origin/main"])?
@@ -140,15 +144,37 @@ fn share_branch(library: &Library, json_output: bool) -> Result<Outcome> {
     }
     if let Some(report) = &checks.report {
         for env in &report.environments {
-            let label = env.record.label.clone().unwrap_or_default();
-            match env.signature(dir) {
-                Some(Signature::Unsigned) => outcome.unsigned.push(label),
-                Some(Signature::Stale) => outcome.stale.push(label),
-                _ => {}
+            if env.signature(dir) == Some(Signature::Unsigned) {
+                outcome
+                    .unsigned
+                    .push(env.record.label.clone().unwrap_or_default());
             }
         }
     }
+    // What the pull request will lack: what the person can supply stops the
+    // sharing, so that they sign before the checks fail; what only others can
+    // supply is reported once the pull request is open.
+    let verdict = crate::verify::evaluate(library, "origin/main", checks.report.as_ref())?;
+    let me = crate::keys::signing_key(dir).and_then(|key| {
+        verdict
+            .base_config
+            .member_with_key(&key)
+            .map(str::to_string)
+    });
+    for missing in &verdict.missing {
+        let mine = me
+            .as_deref()
+            .is_some_and(|m| missing.can_supply(&verdict.base_config, m));
+        if mine {
+            outcome.needs_you.push(missing.describe());
+        } else {
+            outcome.needs_others.push(missing.describe());
+        }
+    }
     outcome.checks = Some(checks);
+    if !outcome.needs_you.is_empty() && !anyway {
+        return Ok(outcome);
+    }
     git_ok(
         dir,
         &["push", "--quiet", "--set-upstream", "origin", &branch],
@@ -159,9 +185,9 @@ fn share_branch(library: &Library, json_output: bool) -> Result<Outcome> {
 }
 
 /// `stemma share`.
-pub fn share(json_output: bool) -> Result<bool> {
+pub fn share(anyway: bool, json_output: bool) -> Result<bool> {
     let library = Library::find(Path::new("."))?;
-    let o = share_branch(&library, json_output)?;
+    let o = share_branch(&library, anyway, json_output)?;
     let checks_ok = o.checks.as_ref().is_some_and(Checks::ok);
     let ok = o.conflicts.is_empty() && checks_ok && o.pushed;
     if json_output {
@@ -174,7 +200,8 @@ pub fn share(json_output: bool) -> Result<bool> {
             "conflicts": o.conflicts,
             "problems": problems, "build": build, "pushed": o.pushed,
             "pull_request": o.pull_request,
-            "needs_signatures": o.stale, "unsigned": o.unsigned,
+            "needs_you": o.needs_you, "needs_others": o.needs_others,
+            "unsigned": o.unsigned,
         });
         println!("{}", serde_json::to_string_pretty(&value)?);
         return Ok(ok);
@@ -204,6 +231,16 @@ pub fn share(json_output: bool) -> Result<bool> {
         }
         return Ok(false);
     }
+    if !o.pushed {
+        ui::warning("Not shared yet: the pull request would lack what you can give it.");
+        for n in &o.needs_you {
+            ui::error(n);
+        }
+        ui::note(
+            "Run `stemma sign` in your own terminal, then share again (`--anyway` shares now).",
+        );
+        return Ok(false);
+    }
     match &o.pull_request {
         Some(url) => ui::success(format!("Shared {}: {url}", ui::bold(&o.branch))),
         None => ui::warning(format!(
@@ -211,12 +248,11 @@ pub fn share(json_output: bool) -> Result<bool> {
             o.branch
         )),
     }
-    if !o.stale.is_empty() {
-        ui::warning(format!(
-            "It needs signatures before it can be merged: {}.",
-            o.stale.join(", ")
-        ));
-        ui::note("A signer runs `stemma sign` in their own terminal.");
+    for n in o.needs_you.iter().chain(&o.needs_others) {
+        ui::warning(n);
+    }
+    if !o.needs_others.is_empty() {
+        ui::note("It needs someone else's signature or approval before it can be merged.");
     }
     if !o.unsigned.is_empty() {
         ui::note(format!(

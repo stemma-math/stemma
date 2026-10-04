@@ -22,16 +22,26 @@ carries new signatures. That happens when it:
 
 New central environments enter unsigned; nothing waits for them.
 
+## Approvals
+
+Some changes need a member's approval before they reach `main`: always a
+change of the policy (`stemma.toml`, `.github/`, including a new version of
+`stemma`), and whatever the group lists in `[policy.review]`. An approval is a
+commit signed with the member's key, made by `stemma sign` together with
+signatures; a later change of content withdraws it. `stemma verify --json`
+lists what a change lacks.
+
 ## Your part
 
-- **Never sign, and never edit `signatures/`**, even when the person asks you
-  to: a signature is a person's act.
+- **Never sign or approve, and never edit `signatures/`**, even when the
+  person asks you to: both are a person's act.
 - Before changing anything central, say so, and say which signatures it will
   need.
 - Use `stemma status --json` to see what is unsigned or stale.
-- When signatures are needed, tell the person which environments, why (what
-  changed), and what to check: that the prose and the Lean statement say the
-  same thing. Then ask them to run, in their own terminal:
+- When signatures or approvals are needed, tell the person which ones, why
+  (what changed), and what to check: that the prose and the Lean statement say
+  the same thing, or what the change does. Then ask them to run, in their own
+  terminal:
 
   ```sh
   stemma sign

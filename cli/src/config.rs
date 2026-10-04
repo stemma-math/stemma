@@ -15,8 +15,6 @@ pub struct Config {
     pub members: BTreeMap<String, Member>,
     #[serde(default)]
     pub policy: Policy,
-    #[serde(default)]
-    pub signatures: Signatures,
 }
 
 /// The `[library]` table.
@@ -35,26 +33,17 @@ pub struct Library {
 pub struct Member {
     #[serde(default)]
     pub roles: Vec<String>,
+    /// The public keys the member signs with, as SSH public keys.
+    #[serde(default)]
+    pub keys: Vec<String>,
 }
 
-/// Who may merge which pull requests.
+/// Which changes need whose approval.
 #[derive(Debug, Default, Deserialize)]
 pub struct Policy {
-    /// The roles whose members may merge their pull requests without another
-    /// member's approval, once every check passes. When absent, every member
-    /// may. Merging is always done by a person.
-    pub merge_without_approval: Option<Vec<String>>,
     /// Kinds of change, and the roles whose approval they need.
     #[serde(default)]
     pub review: BTreeMap<String, Vec<String>>,
-}
-
-/// The `[signatures]` table.
-#[derive(Debug, Default, Deserialize)]
-pub struct Signatures {
-    /// Whether the signer must differ from the pull request's author.
-    #[serde(default)]
-    pub distinct_from_author: bool,
 }
 
 impl Config {
@@ -71,20 +60,20 @@ impl Config {
         Ok(toml::from_str(text)?)
     }
 
+    /// The member who signs with `key`, if any.
+    pub fn member_with_key(&self, key: &str) -> Option<&str> {
+        let key = crate::keys::normalize(key);
+        self.members
+            .iter()
+            .find(|(_, m)| m.keys.iter().any(|k| crate::keys::normalize(k) == key))
+            .map(|(name, _)| name.as_str())
+    }
+
     /// Whether `account` is a member with one of `roles`.
     pub fn has_role(&self, account: &str, roles: &[String]) -> bool {
         self.members
             .get(account)
             .is_some_and(|m| m.roles.iter().any(|r| roles.contains(r)))
-    }
-
-    /// Whether `account` may merge their pull requests without another member's
-    /// approval.
-    pub fn may_merge_without_approval(&self, account: &str) -> bool {
-        match &self.policy.merge_without_approval {
-            None => self.members.contains_key(account),
-            Some(roles) => self.has_role(account, roles),
-        }
     }
 
     /// The roles whose approval a kind of change needs. A change to the
@@ -110,15 +99,11 @@ mod tests {
 [library]
 name = "Alg"
 title = "Alg"
-stemma = "0.1.0"
+stemma = "0.3.0"
 
 [members]
-alice = { roles = ["maintainer", "signer"] }
+alice = { roles = ["maintainer", "signer"], keys = ["ssh-ed25519 AAAAalice alice@laptop"] }
 bob = { roles = ["signer"] }
-carol = { roles = [] }
-
-[policy]
-merge_without_approval = ["signer"]
 
 [policy.review]
 new-central = ["signer"]
@@ -127,19 +112,20 @@ new-central = ["signer"]
     #[test]
     fn reads_members_and_policy() {
         let c = Config::parse(CONFIG).unwrap();
-        assert!(c.may_merge_without_approval("bob"));
-        assert!(!c.may_merge_without_approval("carol"));
-        assert!(!c.may_merge_without_approval("mallory"));
+        assert!(c.has_role("alice", &["maintainer".into()]));
+        assert!(!c.has_role("bob", &["maintainer".into()]));
         assert_eq!(c.review_roles("new-central").unwrap(), ["signer"]);
         assert_eq!(c.review_roles("policy").unwrap(), ["maintainer"]);
         assert!(c.review_roles("dependencies").is_none());
     }
 
     #[test]
-    fn by_default_every_member_merges_their_own_work() {
-        let c =
-            Config::parse(&CONFIG.replace("merge_without_approval = [\"signer\"]", "")).unwrap();
-        assert!(c.may_merge_without_approval("carol"));
-        assert!(!c.may_merge_without_approval("mallory"));
+    fn finds_a_member_by_key_whatever_the_comment() {
+        let c = Config::parse(CONFIG).unwrap();
+        assert_eq!(
+            c.member_with_key("ssh-ed25519 AAAAalice other"),
+            Some("alice")
+        );
+        assert_eq!(c.member_with_key("ssh-ed25519 AAAAbob"), None);
     }
 }

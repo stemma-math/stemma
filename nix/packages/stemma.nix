@@ -25,8 +25,8 @@ in
 
     cargoLock.lockFile = root + "/Cargo.lock";
 
-    # The integration tests make git repositories.
-    nativeCheckInputs = [pkgs.git];
+    # The integration tests make git repositories, and sign with SSH keys.
+    nativeCheckInputs = [pkgs.git pkgs.openssh];
 
     meta = {
       description = "The Stemma command line";

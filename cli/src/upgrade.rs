@@ -12,6 +12,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::commands::{LEAN_TOOLCHAIN, STEMMA_GIT, mathlib_rev};
+use crate::config::Config;
 use crate::library::Library;
 use crate::{agents_md, templates, ui};
 
@@ -42,6 +43,46 @@ struct Migration {
     version: Version,
     description: &'static str,
     apply: fn(&mut Files, title: &str),
+}
+
+/// `text` without the lines that set `key`.
+fn without_key(text: &str, key: &str) -> String {
+    text.lines()
+        .filter(|line| {
+            !line
+                .trim_start()
+                .strip_prefix(key)
+                .is_some_and(|rest| rest.trim_start().starts_with('='))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n"
+}
+
+/// `text` with `key` added to the member `name`'s keys, when that member has
+/// none. Members are written one per line, as `stemma init` writes them.
+pub fn with_member_key(text: &str, name: &str, key: &str) -> String {
+    let quoted = format!("\"{name}\"");
+    text.lines()
+        .map(|line| {
+            let trimmed = line.trim_start();
+            let is_member = [name, quoted.as_str()].iter().any(|n| {
+                trimmed
+                    .strip_prefix(n)
+                    .is_some_and(|rest| rest.trim_start().starts_with('='))
+            });
+            match line.rfind('}') {
+                Some(end) if is_member && !line.contains("keys") => format!(
+                    "{}, keys = [\"{key}\"] {}",
+                    line[..end].trim_end(),
+                    &line[end..]
+                ),
+                _ => line.to_string(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n"
 }
 
 /// Every migration, oldest first.
@@ -82,6 +123,16 @@ const MIGRATIONS: &[Migration] = &[
             {
                 files.agents = Some(agents_md::initial(title));
             }
+        },
+    },
+    Migration {
+        version: (0, 3, 0),
+        description: "approvals are signed commits, checked against members' keys: \
+            `merge_without_approval` and `distinct_from_author` are gone, and members \
+            need `keys`",
+        apply: |files, _| {
+            files.config = without_key(&files.config, "merge_without_approval");
+            files.config = without_key(&files.config, "distinct_from_author");
         },
     },
 ];
@@ -136,6 +187,13 @@ fn plan(library: &Library) -> Result<Plan> {
     {
         (m.apply)(&mut files, &config.title);
         migrations.push(m.description);
+    }
+    // The person upgrading signs with their key: when their member has none,
+    // it is added, so that they can sign and approve with this version.
+    if let Some(key) = crate::keys::signing_key(dir)
+        && Config::parse(&files.config).is_ok_and(|c| c.member_with_key(&key).is_none())
+    {
+        files.config = with_member_key(&files.config, &crate::agent::person(), &key);
     }
     // The version the library uses.
     files.config = files
@@ -326,6 +384,16 @@ mod tests {
         assert_eq!(parse_version("1.0"), None);
         assert_eq!(parse_version("0.2.1.4"), None);
         assert!(parse_version("0.10.0") > parse_version("0.9.9"));
+    }
+
+    #[test]
+    fn adds_a_key_to_a_member_without_one() {
+        let text = "[members]\nalice = { roles = [\"maintainer\"] }\nbob = { roles = [] }\n";
+        let new = with_member_key(text, "alice", "ssh-ed25519 AAAA");
+        assert!(
+            new.contains("alice = { roles = [\"maintainer\"], keys = [\"ssh-ed25519 AAAA\"] }")
+        );
+        assert!(new.contains("bob = { roles = [] }"));
     }
 
     #[test]
