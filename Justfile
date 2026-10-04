@@ -22,15 +22,17 @@ build:
 run *ARGS:
     cargo run --quiet -- {{ ARGS }}
 
-# Run the Rust tests.
+# Run the Rust tests and the Lean library's tests.
 [group('development')]
 test:
     cargo test
+    cd lean && lake build StemmaTest stemma-extract
+    lean/tests/check-failures.sh
+    lean/tests/check-extract.sh
 
 # Run every check: formatting, Clippy, the tests and the Lean build.
 [group('development')]
 check:
     nix flake check
     cargo clippy --all-targets -- --deny warnings
-    cargo test
-    cd lean && lake build
+    just test

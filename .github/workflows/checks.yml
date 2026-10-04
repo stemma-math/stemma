@@ -1,0 +1,52 @@
+# The checks every pull request, and every change to main, must pass.
+name: Checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  nix:
+    name: Formatting, Rust tests and package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: cachix/install-nix-action@v31
+      - name: Cache the Nix store
+        uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'nix/**', 'Cargo.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+      - name: Check the flake (formatting, the package and its tests)
+        run: nix flake check --print-build-logs
+      - name: Clippy
+        run: nix develop --command cargo clippy --all-targets -- --deny warnings
+
+  lean:
+    name: Lean library and its tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install elan
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+            | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Cache Lake's packages and builds
+        uses: actions/cache@v4
+        with:
+          path: lean/.lake
+          key: lake-${{ hashFiles('lean/lean-toolchain', 'lean/lake-manifest.json') }}-${{ hashFiles('lean/**/*.lean') }}
+          restore-keys: lake-${{ hashFiles('lean/lean-toolchain', 'lean/lake-manifest.json') }}-
+      - name: Build the library and its tests
+        working-directory: lean
+        run: lake build StemmaTest stemma-extract
+      - name: Documents that must fail
+        run: lean/tests/check-failures.sh
+      - name: Extraction
+        run: lean/tests/check-extract.sh

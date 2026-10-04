@@ -1,6 +1,21 @@
 name = "stemma"
-version = "0.0.0"
+version = "0.1.0"
 defaultTargets = ["Stemma"]
+
+[[require]]
+name = "verso"
+git = "https://github.com/leanprover/verso.git"
+rev = "v4.34.0"
 
 [[lean_lib]]
 name = "Stemma"
+
+[[lean_lib]]
+name = "StemmaTest"
+# Verso warns about Lean lines longer than 60 columns, for narrow screens.
+leanOptions = { weak.verso.code.warnLineLength = 0 }
+
+[[lean_exe]]
+name = "stemma-extract"
+root = "StemmaExtract"
+supportInterpreter = true

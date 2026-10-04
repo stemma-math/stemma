@@ -8,7 +8,7 @@ in
     pname = "stemma";
     inherit (manifest.workspace.package) version;
 
-    # Only what Cargo reads, so that changes elsewhere (lean/, docs, Nix)
+    # Only what Cargo reads, so that changes elsewhere (the Lean library, docs, Nix)
     # do not rebuild the command line.
     src = lib.fileset.toSource {
       inherit root;
@@ -16,6 +16,10 @@ in
         (root + "/Cargo.toml")
         (root + "/Cargo.lock")
         (root + "/cli")
+        # The Lean toolchain the command line works with, and the Lean
+        # library's version, which must be the command line's.
+        (root + "/lean/lean-toolchain")
+        (root + "/lean/lakefile.toml")
       ];
     };
 

@@ -1,0 +1,59 @@
+{% raw -%}
+# Written by `stemma init`. The checks a pull request must pass to be merged:
+# `stemma check` (the specification) and `stemma verify` (signatures and the
+# group's policy, read from main).
+name: Stemma
+
+on:
+  pull_request:
+  # Approvals can be what a pull request was waiting for.
+  pull_request_review:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: stemma-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stemma:
+    name: Stemma
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # `stemma verify` reads the commits of the pull request and main.
+          fetch-depth: 0
+      - name: Install elan
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+            | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Install stemma
+        run: |
+          version=$(sed -n 's/^stemma = "\(.*\)"$/\1/p' stemma.toml)
+          name="stemma-$version-x86_64-unknown-linux-musl"
+          curl -sSfL "https://github.com/stemma-math/stemma/releases/download/v$version/$name.tar.gz" | tar xz
+          echo "$PWD/$name" >> "$GITHUB_PATH"
+      - name: Cache Lake's packages and builds
+        uses: actions/cache@v4
+        with:
+          path: .lake
+          key: lake-${{ hashFiles('lean-toolchain', 'lake-manifest.json') }}-${{ github.sha }}
+          restore-keys: lake-${{ hashFiles('lean-toolchain', 'lake-manifest.json') }}-
+      - name: Get Mathlib's cache
+        run: |
+          if grep -q 'name = "mathlib"' lakefile.toml; then
+            lake exe cache get
+          fi
+      - name: Check
+        run: stemma check
+      - name: Verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: stemma verify
+{%- endraw %}
