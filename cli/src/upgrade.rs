@@ -199,11 +199,33 @@ fn plan(library: &Library) -> Result<Plan> {
     })
 }
 
-/// `stemma upgrade`.
-pub fn upgrade(dry_run: bool, update: bool, json_output: bool) -> Result<bool> {
+/// Runs git in the library, failing with its error.
+fn git(dir: &Path, args: &[&str]) -> Result<()> {
+    let out = Command::new("git").args(args).current_dir(dir).output()?;
+    anyhow::ensure!(
+        out.status.success(),
+        "`git {}` failed:\n{}",
+        args.join(" "),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    Ok(())
+}
+
+/// `stemma upgrade`. On `main`, the upgrade goes to a branch of its own; it is
+/// committed unless `commit` is false, ready to share.
+pub fn upgrade(dry_run: bool, update: bool, commit: bool, json_output: bool) -> Result<bool> {
     let library = Library::find(Path::new("."))?;
     let plan = plan(&library)?;
     let to = env!("CARGO_PKG_VERSION");
+    let dir = &library.dir;
+    let in_git = crate::branches::current(dir).is_some();
+    let mut branch = crate::branches::current(dir);
+    if !dry_run && !plan.changed.is_empty() && branch.as_deref() == Some("main") {
+        branch = Some(crate::branches::move_to_new(
+            dir,
+            &format!("upgrade/stemma-{to}"),
+        )?);
+    }
     if !dry_run {
         for (file, text) in &plan.writes {
             let path = library.dir.join(file);
@@ -226,10 +248,27 @@ pub fn upgrade(dry_run: bool, update: bool, json_output: bool) -> Result<bool> {
     } else {
         None
     };
+    let committed = if !dry_run && commit && in_git && !plan.changed.is_empty() {
+        let mut files: Vec<&str> = plan.changed.iter().map(String::as_str).collect();
+        if dir.join("lake-manifest.json").exists() {
+            files.push("lake-manifest.json");
+        }
+        let mut add = vec!["add", "--"];
+        add.extend(&files);
+        git(dir, &add)?;
+        let message = format!("Upgrade to stemma {to}");
+        let mut commit_args = vec!["commit", "--quiet", "-m", &message, "--"];
+        commit_args.extend(&files);
+        git(dir, &commit_args)?;
+        true
+    } else {
+        false
+    };
     if json_output {
         let value = json!({
             "from": plan.from, "to": to, "dry_run": dry_run,
             "migrations": plan.migrations, "changed": plan.changed, "updated": updated,
+            "branch": branch, "committed": committed,
         });
         println!("{}", serde_json::to_string_pretty(&value)?);
         return Ok(updated != Some(false));
@@ -259,10 +298,19 @@ pub fn upgrade(dry_run: bool, update: bool, json_output: bool) -> Result<bool> {
         Some(false) => ui::warning("Could not update the dependencies: run `lake update`."),
         None => {}
     }
-    if !dry_run {
+    if committed {
+        ui::success(format!(
+            "Committed it on the branch {}.",
+            ui::bold(branch.as_deref().unwrap_or_default())
+        ));
         ui::note(
-            "Next: `stemma check`, then share the change as one pull request. New versions of \
-             Lean or Mathlib can leave signatures stale: `stemma status` shows them.",
+            "Next: `stemma check`, then `stemma share`. New versions of Lean or Mathlib can \
+             leave signatures stale: `stemma status` shows them.",
+        );
+    } else if !dry_run {
+        ui::note(
+            "Next: `stemma check`, commit, and share the change as one pull request. New \
+             versions of Lean or Mathlib can leave signatures stale: `stemma status` shows them.",
         );
     }
     Ok(updated != Some(false))

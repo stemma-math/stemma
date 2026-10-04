@@ -231,40 +231,16 @@ pub fn person() -> String {
     if slug.is_empty() { "me".into() } else { slug }
 }
 
-/// The current branch, if the library is a git repository.
-fn current_branch(dir: &Path) -> Option<String> {
-    let out = Command::new("git")
-        .args(["branch", "--show-current"])
-        .current_dir(dir)
-        .output()
-        .ok()?;
-    out.status
-        .success()
-        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
-}
-
 /// Moves from `main` to the person's working branch, creating it the first time.
 fn ensure_working_branch(dir: &Path) -> Result<Option<String>> {
-    let Some(branch) = current_branch(dir) else {
+    let Some(branch) = crate::branches::current(dir) else {
         return Ok(None);
     };
     if branch != "main" {
         return Ok(Some(branch));
     }
     let working = format!("work/{}", person());
-    let exists = Command::new("git")
-        .args(["rev-parse", "--verify", "--quiet", &working])
-        .current_dir(dir)
-        .output()?
-        .status
-        .success();
-    let mut switch = Command::new("git");
-    switch.arg("switch").current_dir(dir);
-    if !exists {
-        switch.arg("--create");
-    }
-    let status = switch.arg(&working).arg("--quiet").status()?;
-    anyhow::ensure!(status.success(), "could not switch to the branch {working}");
+    crate::branches::switch_to(dir, &working)?;
     Ok(Some(working))
 }
 
@@ -281,7 +257,7 @@ pub fn prepare(agent: Agent, extra: Vec<String>, dry_run: bool) -> Result<Launch
     };
     args.extend(extra);
     let branch = if dry_run {
-        current_branch(&library.dir)
+        crate::branches::current(&library.dir)
     } else {
         ensure_working_branch(&library.dir)?
     };
