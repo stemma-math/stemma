@@ -5,6 +5,7 @@ mod commands;
 mod config;
 mod lake;
 mod library;
+mod readback;
 mod report;
 mod share;
 mod sign;
@@ -79,6 +80,30 @@ enum Commands {
     },
     /// Bring `main` in, and open or update the pull request.
     Share,
+    /// Make blind read-backs of environments' Lean, and show them beside their prose.
+    Readback {
+        /// Read back these labels. By default, every central environment
+        /// without a current read-back.
+        labels: Vec<String>,
+        /// Read back every environment of this module.
+        #[arg(long)]
+        module: Option<String>,
+        /// Make them again even when they are current.
+        #[arg(long)]
+        force: bool,
+        /// The agent that makes them.
+        #[arg(long, value_enum, default_value = "claude")]
+        agent: readback::Translator,
+        /// The agent's model.
+        #[arg(long)]
+        model: Option<String>,
+        /// Make them without serving the page.
+        #[arg(long)]
+        no_serve: bool,
+        /// The port to serve on (or the next free one).
+        #[arg(long, default_value_t = 8001)]
+        port: u16,
+    },
     /// Sign central environments, in your own terminal.
     Sign {
         /// Sign only these labels.
@@ -160,6 +185,26 @@ fn main() -> ExitCode {
         Commands::Check => commands::check(cli.json),
         Commands::Status => commands::status(cli.json),
         Commands::Preview { no_serve, port } => site::preview(!no_serve, port, cli.json),
+        Commands::Readback {
+            labels,
+            module,
+            force,
+            agent,
+            model,
+            no_serve,
+            port,
+        } => readback::readback(
+            readback::Options {
+                labels,
+                module,
+                force,
+                translator: agent,
+                model,
+                serve: !no_serve,
+                port,
+            },
+            cli.json,
+        ),
         Commands::Share => share::share(cli.json),
         Commands::Sign { labels, no_commit } => sign::sign(labels, !no_commit),
         Commands::Claude(args) => start(agent::Agent::Claude, args),

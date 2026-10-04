@@ -132,7 +132,7 @@ pub fn preview(serve: bool, port: u16, json_output: bool) -> Result<bool> {
 }
 
 /// Binds to `port`, or to the next free one.
-fn bind(port: u16) -> Result<(TcpListener, u16)> {
+pub(crate) fn bind(port: u16) -> Result<(TcpListener, u16)> {
     for candidate in port..port.saturating_add(20) {
         if let Ok(listener) = TcpListener::bind(("127.0.0.1", candidate)) {
             return Ok((listener, candidate));
@@ -175,7 +175,7 @@ fn resolve(root: &Path, request: &str) -> Option<PathBuf> {
 }
 
 /// Answers one HTTP request with a file of the site.
-fn respond(mut stream: TcpStream, root: &Path) -> Result<()> {
+pub(crate) fn respond(mut stream: TcpStream, root: &Path) -> Result<()> {
     let mut line = String::new();
     BufReader::new(&stream).read_line(&mut line)?;
     let target = line.split_whitespace().nth(1).unwrap_or("/");
