@@ -1,5 +1,6 @@
 //! `stemma`: the command line of the Stemma specification.
 
+mod agent;
 mod commands;
 mod config;
 mod lake;
@@ -64,6 +65,37 @@ enum Commands {
     Check,
     /// Show the state of every environment.
     Status,
+    /// Start Claude Code, equipped to work in the library.
+    Claude(AgentArgs),
+    /// Start Codex, equipped to work in the library.
+    Codex(AgentArgs),
+}
+
+#[derive(clap::Args)]
+struct AgentArgs {
+    /// Print the command instead of running it.
+    #[arg(long)]
+    dry_run: bool,
+    /// Arguments passed on to the agent.
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    args: Vec<String>,
+}
+
+/// Starts an agent, or prints how it would be started.
+fn start(agent: agent::Agent, args: AgentArgs) -> anyhow::Result<bool> {
+    let launch = agent::prepare(agent, args.args, args.dry_run)?;
+    if args.dry_run {
+        let value = serde_json::json!({
+            "program": launch.program, "args": launch.args,
+            "dir": launch.dir, "branch": launch.branch,
+        });
+        println!("{}", serde_json::to_string_pretty(&value)?);
+        return Ok(true);
+    }
+    if let Some(branch) = &launch.branch {
+        eprintln!("Working on the branch {branch}.");
+    }
+    launch.run()
 }
 
 fn main() -> ExitCode {
@@ -105,6 +137,8 @@ fn main() -> ExitCode {
         .map(|()| true),
         Commands::Check => commands::check(cli.json),
         Commands::Status => commands::status(cli.json),
+        Commands::Claude(args) => start(agent::Agent::Claude, args),
+        Commands::Codex(args) => start(agent::Agent::Codex, args),
     };
     match result {
         Ok(true) => ExitCode::SUCCESS,
