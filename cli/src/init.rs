@@ -24,6 +24,8 @@ pub struct Options {
     pub commit: Option<bool>,
     pub remote: Option<String>,
     pub push: Option<bool>,
+    /// Members besides the person creating the library, by forge account.
+    pub members: Vec<String>,
     /// Take every default without asking.
     pub yes: bool,
 }
@@ -192,6 +194,23 @@ pub fn init(options: Options, json_output: bool) -> Result<()> {
         bail!("'{name}' is not a valid Lean name for a library");
     }
     let title = ask.text(options.title, "Its title", &name)?;
+    // The person creating the library is its first member, so that someone can
+    // approve the changes the policy reserves to maintainers.
+    let creator = crate::agent::person();
+    let mut members = vec![ask.text(None, "Your account on the forge", &creator)?];
+    let others = if options.members.is_empty() {
+        ask.optional(None, "Other members' accounts, separated by commas", "none")?
+            .split(',')
+            .map(|m| m.trim().to_string())
+            .collect()
+    } else {
+        options.members
+    };
+    for m in others {
+        if !m.is_empty() && !members.contains(&m) {
+            members.push(m);
+        }
+    }
     let mathlib = ask.yes_no(options.mathlib, "Build on Mathlib?", true, true)?;
     let in_repo = dir.join(".git").exists();
     let git = !in_repo && ask.yes_no(options.git, "Create a git repository?", true, true)?;
@@ -237,6 +256,7 @@ pub fn init(options: Options, json_output: bool) -> Result<()> {
         "stemma_path": stemma_path.map(|p| p.display().to_string()),
         "mathlib": mathlib,
         "mathlib_rev": mathlib_rev(),
+        "members": members,
     });
     for sub in [name.as_str(), ".github/workflows"] {
         std::fs::create_dir_all(dir.join(sub))
@@ -374,10 +394,10 @@ pub fn init(options: Options, json_output: bool) -> Result<()> {
         );
     } else {
         let next = if dir == Path::new(".") {
-            "Next: `stemma claude` (or `stemma codex`) to start working.".to_string()
+            "Next: `stemma claude/codex` to start working.".to_string()
         } else {
             format!(
-                "Next: cd {} and `stemma claude` (or `stemma codex`) to start working.",
+                "Next: cd {} and `stemma claude/codex` to start working.",
                 dir.display()
             )
         };
