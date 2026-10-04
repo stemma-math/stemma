@@ -119,3 +119,73 @@ fn new_adds_modules_to_the_table_of_contents() {
     assert!(!stemma(&dir, &["new", "Groups.Basic"]).status.success());
     assert!(!stemma(&dir, &["new", "bad name"]).status.success());
 }
+
+#[test]
+fn upgrade_moves_an_old_library_to_this_version() {
+    let dir = scratch("upgrade");
+    let out = stemma(
+        &dir,
+        &[
+            "init",
+            ".",
+            "--name",
+            "Alg",
+            "--title",
+            "Alg",
+            "--no-git",
+            "--no-mathlib",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // The library as stemma 0.1.0 left it.
+    let config = read(dir.join("stemma.toml")).replace(
+        &format!("stemma = \"{}\"", env!("CARGO_PKG_VERSION")),
+        "stemma = \"0.1.0\"",
+    ) + "\n[policy]\nself_merge = [\"signer\"]\n";
+    std::fs::write(dir.join("stemma.toml"), config).unwrap();
+    std::fs::write(
+        dir.join("AGENTS.md"),
+        "# Alg\n\nThis is a Stemma library. Work on it through `stemma`: start agents with\n\
+         `stemma claude` or `stemma codex`, which give them the instructions, skills and\n\
+         permissions this library needs. An agent started directly is not equipped to\n\
+         work here.\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("lean-toolchain"), "leanprover/lean4:v4.20.0\n").unwrap();
+    std::fs::remove_file(dir.join(".github/workflows/stemma.yml")).unwrap();
+
+    // A dry run changes nothing.
+    let out = stemma(&dir, &["upgrade", "--dry-run", "--json"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let plan: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(plan["from"], "0.1.0");
+    assert_eq!(plan["migrations"].as_array().unwrap().len(), 2);
+    assert!(read(dir.join("stemma.toml")).contains("self_merge"));
+
+    let out = stemma(&dir, &["upgrade", "--no-update"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let config = read(dir.join("stemma.toml"));
+    assert!(config.contains(&format!("stemma = \"{}\"", env!("CARGO_PKG_VERSION"))));
+    assert!(config.contains("merge_without_approval = [\"signer\"]"));
+    assert!(!config.contains("self_merge"));
+    assert!(read(dir.join("AGENTS.md")).contains("Working in a Stemma library"));
+    assert!(!read(dir.join("lean-toolchain")).contains("v4.20.0"));
+    assert!(dir.join(".github/workflows/stemma.yml").is_file());
+
+    // Upgrading again changes nothing.
+    let out = stemma(&dir, &["upgrade", "--no-update", "--json"]);
+    let again: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(again["changed"].as_array().unwrap().is_empty());
+}

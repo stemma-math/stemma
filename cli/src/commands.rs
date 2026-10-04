@@ -175,10 +175,16 @@ impl Checks {
 pub fn run_checks(library: &Library, json_output: bool) -> Result<Checks> {
     let mut problems = disk_diagnostics(library)?;
     let version = env!("CARGO_PKG_VERSION");
-    if library.config.library.stemma != version {
+    let pinned = &library.config.library.stemma;
+    if pinned != version {
+        let fix = match crate::upgrade::parse_version(pinned) {
+            Some(v) if v < crate::upgrade::this_version() => {
+                "run `stemma upgrade` to move it to this version".to_string()
+            }
+            _ => format!("install stemma {pinned} to work on it"),
+        };
         problems.push(format!(
-            "The library uses stemma {}, but this is stemma {version}.",
-            library.config.library.stemma
+            "The library uses stemma {pinned}, but this is stemma {version}: {fix}."
         ));
     }
     let (build, report) = match build_and_extract(library, json_output)? {

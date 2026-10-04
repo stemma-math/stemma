@@ -97,8 +97,10 @@ Every Stemma library depends on Lean, on `stemma`'s Lean package, on Verso
 (through documents, §2) and usually on Mathlib. `stemma` alone chooses their
 versions: each release of `stemma` names a combination of Lean, Verso and
 Mathlib that it has checked works together (the packages they share pinned to
-the same revisions), and `stemma` moves a library from one combination to
-another as a single change.
+the same revisions), and `stemma upgrade` moves a library from one combination
+to another as a single change, applying the migrations of the versions in
+between. `stemma check` fails when the library uses another version than the
+command line's, and says which of the two to change.
 
 ### Configuration
 
@@ -566,6 +568,7 @@ The first forge Stemma supports is GitHub:
 | `stemma status` | Shows states: not formalized, pending, signatures, distance from `main` |
 | `stemma preview` | Builds the site and serves it locally |
 | `stemma share` | Brings `main` in, and opens or updates the pull request |
+| `stemma upgrade` | Moves the library to this version of `stemma`: migrations, the files only `stemma` writes, and the dependencies |
 | `stemma verify` | What the forge requires of a pull request beyond `stemma check`: signatures and the group's policy |
 | `stemma sign` | Signs, in an interactive terminal |
 | `stemma readback` | Makes read-backs and shows them in a local web page |
