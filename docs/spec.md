@@ -313,6 +313,21 @@ until someone signs them), proofs of signed statements, dark work outside
 every signed closure, prose outside environments, and environments that are
 not central.
 
+### Who signs
+
+- Any member with the `signer` role may sign.
+- The person who directed a change may sign it: a signature guarantees that a
+  person checked the correspondence, not that a second person did. A group
+  that wants a second pair of eyes says so in `stemma.toml`:
+
+  ```toml
+  [signatures]
+  distinct_from_author = true   # the signer cannot be the pull request's author
+  ```
+
+- A signature records who signed and, when there was one, which agent proposed
+  the change (from the commit trailers).
+
 ## 4. Collaboration
 
 A library lives in a repository on a forge, with one shared branch, `main`.
@@ -416,8 +431,7 @@ The first forge Stemma supports is GitHub:
 
 ## Open questions
 
-1. **Signatures.** Who signs; how a signature is made, out of an agent's
-   reach; the audit (read-back) that comes with it; and the format of
+1. **Signatures.** How a signature is made, out of an agent's reach; the audit (read-back) that comes with it; and the format of
    `signatures/<label>.toml`.
 2. **Private work.** Whether a person can keep modules private within the
    group, and where they live.
