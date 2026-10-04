@@ -18,10 +18,6 @@ const TEMPLATES: &[(&str, &str)] = &[
         include_str!("../templates/library/root.lean.jinja"),
     ),
     (
-        "library/AGENTS.md",
-        include_str!("../templates/library/AGENTS.md.jinja"),
-    ),
-    (
         "library/README.md",
         include_str!("../templates/library/README.md.jinja"),
     ),

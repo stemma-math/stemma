@@ -1,8 +1,10 @@
 //! `stemma`: the command line of the Stemma specification.
 
 mod agent;
+mod agents_md;
 mod commands;
 mod config;
+mod init;
 mod lake;
 mod library;
 mod readback;
@@ -11,6 +13,7 @@ mod share;
 mod sign;
 mod site;
 mod templates;
+mod ui;
 mod verify;
 
 use std::path::PathBuf;
@@ -31,11 +34,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Create a Stemma library.
+    /// Create a Stemma library. In a terminal, it asks what it needs.
     Init {
         /// The directory of the library.
-        #[arg(default_value = ".")]
-        dir: PathBuf,
+        dir: Option<PathBuf>,
         /// The library's Lean name. By default, from the directory's name.
         #[arg(long)]
         name: Option<String>,
@@ -51,6 +53,21 @@ enum Commands {
         /// Do not create a git repository.
         #[arg(long)]
         no_git: bool,
+        /// Download the dependencies (`lake update`, and Mathlib's cache).
+        #[arg(long)]
+        update: bool,
+        /// Commit the new library.
+        #[arg(long)]
+        commit: bool,
+        /// Add this remote as origin.
+        #[arg(long)]
+        remote: Option<String>,
+        /// Push main to the remote.
+        #[arg(long)]
+        push: bool,
+        /// Ask nothing: take every default.
+        #[arg(long, short)]
+        yes: bool,
     },
     /// Create a module and add it to the table of contents.
     New {
@@ -120,6 +137,12 @@ enum Commands {
         #[arg(long)]
         base: Option<String>,
     },
+    /// Hooks agents run; not meant to be called by hand.
+    #[command(hide = true)]
+    Hook {
+        /// The event: `session-start`.
+        event: String,
+    },
     /// Start Claude Code, equipped to work in the library.
     Claude(AgentArgs),
     /// Start Codex, equipped to work in the library.
@@ -136,6 +159,18 @@ struct AgentArgs {
     args: Vec<String>,
 }
 
+/// Runs a hook for an agent: prints what the agent should know.
+fn hook(event: &str) -> anyhow::Result<bool> {
+    match event {
+        "session-start" => {
+            let library = library::Library::find(std::path::Path::new("."))?;
+            println!("{}", agent::session_summary(&library));
+            Ok(true)
+        }
+        other => anyhow::bail!("unknown hook event '{other}'"),
+    }
+}
+
 /// Starts an agent, or prints how it would be started.
 fn start(agent: agent::Agent, args: AgentArgs) -> anyhow::Result<bool> {
     let launch = agent::prepare(agent, args.args, args.dry_run)?;
@@ -148,7 +183,7 @@ fn start(agent: agent::Agent, args: AgentArgs) -> anyhow::Result<bool> {
         return Ok(true);
     }
     if let Some(branch) = &launch.branch {
-        eprintln!("Working on the branch {branch}.");
+        ui::note(format!("Working on the branch {branch}."));
     }
     launch.run()
 }
@@ -163,14 +198,24 @@ fn main() -> ExitCode {
             no_mathlib,
             stemma_lean,
             no_git,
-        } => commands::init(
-            commands::InitOptions {
+            update,
+            commit,
+            remote,
+            push,
+            yes,
+        } => init::init(
+            init::Options {
                 dir,
                 name,
                 title,
-                mathlib: !no_mathlib,
+                mathlib: no_mathlib.then_some(false),
                 stemma_lean,
-                git: !no_git,
+                git: no_git.then_some(false),
+                update: update.then_some(true),
+                commit: commit.then_some(true),
+                remote,
+                push: push.then_some(true),
+                yes,
             },
             cli.json,
         )
@@ -216,6 +261,7 @@ fn main() -> ExitCode {
         Commands::Share => share::share(cli.json),
         Commands::Sign { labels, no_commit } => sign::sign(labels, !no_commit),
         Commands::Verify { base } => verify::verify(base, cli.json),
+        Commands::Hook { event } => hook(&event),
         Commands::Claude(args) => start(agent::Agent::Claude, args),
         Commands::Codex(args) => start(agent::Agent::Codex, args),
     };
@@ -223,7 +269,14 @@ fn main() -> ExitCode {
         Ok(true) => ExitCode::SUCCESS,
         Ok(false) => ExitCode::FAILURE,
         Err(error) => {
-            eprintln!("error: {error:#}");
+            eprintln!(
+                "{} {error:#}",
+                owo_colors::OwoColorize::if_supports_color(
+                    &"✗",
+                    owo_colors::Stream::Stderr,
+                    |t| { owo_colors::OwoColorize::red(t).to_string() }
+                )
+            );
             ExitCode::FAILURE
         }
     }

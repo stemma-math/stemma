@@ -103,10 +103,13 @@ pub fn build(library: &Library) -> Result<std::result::Result<PathBuf, String>> 
 /// `stemma preview`: builds the site and serves it locally.
 pub fn preview(serve: bool, port: u16, json_output: bool) -> Result<bool> {
     let library = Library::find(Path::new("."))?;
-    let pages = match build(&library)? {
+    let spinner = crate::ui::Spinner::start("Building the site", json_output);
+    let built = build(&library);
+    spinner.stop();
+    let pages = match built? {
         Ok(pages) => pages,
         Err(problems) => {
-            println!("The library does not build:\n{problems}");
+            crate::commands::show_build_errors(&problems);
             return Ok(false);
         }
     };
@@ -114,7 +117,10 @@ pub fn preview(serve: bool, port: u16, json_output: bool) -> Result<bool> {
         if json_output {
             println!("{}", json!({ "pages": pages }));
         } else {
-            println!("Built the site in {}.", pages.display());
+            crate::ui::success(format!(
+                "Built the site {}",
+                crate::ui::dim(pages.display())
+            ));
         }
         return Ok(true);
     }
@@ -123,7 +129,8 @@ pub fn preview(serve: bool, port: u16, json_output: bool) -> Result<bool> {
     if json_output {
         println!("{}", json!({ "pages": pages, "url": url }));
     } else {
-        println!("Serving the site at {url} (Ctrl-C to stop).");
+        crate::ui::success(format!("Serving the site at {}", crate::ui::bold(&url)));
+        crate::ui::note("Ctrl-C to stop.");
     }
     for stream in listener.incoming().flatten() {
         let _ = respond(stream, &pages);

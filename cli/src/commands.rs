@@ -1,10 +1,8 @@
 //! The commands of `stemma`.
 
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::Path;
 
-use anyhow::{Context, Result, bail};
-use owo_colors::{OwoColorize, Stream::Stdout};
+use anyhow::{Result, bail};
 use serde::Serialize;
 use serde_json::json;
 
@@ -12,6 +10,7 @@ use crate::lake;
 use crate::library::{self, Library};
 use crate::report::{Report, Signature};
 use crate::templates;
+use crate::ui;
 
 /// The Lean toolchain this version of Stemma works with.
 pub const LEAN_TOOLCHAIN: &str = include_str!("../../lean/lean-toolchain");
@@ -20,7 +19,7 @@ pub const LEAN_TOOLCHAIN: &str = include_str!("../../lean/lean-toolchain");
 pub const STEMMA_GIT: &str = "https://github.com/stemma-math/stemma";
 
 /// The Mathlib release matching the Lean toolchain.
-fn mathlib_rev() -> &'static str {
+pub fn mathlib_rev() -> &'static str {
     LEAN_TOOLCHAIN
         .trim()
         .rsplit_once(':')
@@ -35,103 +34,6 @@ fn emit(json_output: bool, value: &impl Serialize, human: impl FnOnce()) -> Resu
         human();
     }
     Ok(())
-}
-
-/// Options of `stemma init`.
-pub struct InitOptions {
-    pub dir: PathBuf,
-    pub name: Option<String>,
-    pub title: Option<String>,
-    pub mathlib: bool,
-    pub stemma_lean: Option<PathBuf>,
-    pub git: bool,
-}
-
-/// The library name a directory suggests: `group-theory` gives `GroupTheory`.
-fn name_from_dir(dir: &Path) -> String {
-    let base = dir
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("Library");
-    base.split(|c: char| !c.is_alphanumeric())
-        .filter(|w| !w.is_empty())
-        .map(|w| {
-            let mut chars = w.chars();
-            chars.next().map_or(String::new(), |c| {
-                c.to_uppercase().chain(chars).collect::<String>()
-            })
-        })
-        .collect()
-}
-
-/// `stemma init`: creates a library.
-pub fn init(options: InitOptions, json_output: bool) -> Result<()> {
-    let dir = &options.dir;
-    if dir.join("stemma.toml").exists() {
-        bail!("{} is already a Stemma library", dir.display());
-    }
-    let name = options.name.unwrap_or_else(|| name_from_dir(dir));
-    if !library::valid_module(&name, &format!("{name}.X")) {
-        bail!("'{name}' is not a valid Lean name for a library");
-    }
-    let title = options.title.unwrap_or_else(|| name.clone());
-    let stemma_path = match &options.stemma_lean {
-        Some(p) => Some(
-            p.canonicalize()
-                .with_context(|| format!("resolving {}", p.display()))?,
-        ),
-        None => None,
-    };
-    let context = json!({
-        "name": name,
-        "title": title,
-        "package": name.to_lowercase(),
-        "version": env!("CARGO_PKG_VERSION"),
-        "stemma_git": STEMMA_GIT,
-        "stemma_path": stemma_path.map(|p| p.display().to_string()),
-        "mathlib": options.mathlib,
-        "mathlib_rev": mathlib_rev(),
-    });
-    for sub in [name.as_str(), ".github/workflows"] {
-        std::fs::create_dir_all(dir.join(sub))
-            .with_context(|| format!("creating {}", dir.display()))?;
-    }
-    let files = [
-        ("stemma.toml", "library/stemma.toml"),
-        ("lakefile.toml", "library/lakefile.toml"),
-        (&format!("{name}.lean") as &str, "library/root.lean"),
-        ("AGENTS.md", "library/AGENTS.md"),
-        ("README.md", "library/README.md"),
-        (".gitignore", "library/gitignore"),
-        (".github/workflows/stemma.yml", "library/github/stemma.yml"),
-    ];
-    let mut written = Vec::new();
-    for (file, template) in files {
-        std::fs::write(dir.join(file), templates::render(template, &context)?)?;
-        written.push(file.to_string());
-    }
-    std::fs::write(dir.join("lean-toolchain"), LEAN_TOOLCHAIN)?;
-    written.push("lean-toolchain".into());
-    let mut git = false;
-    if options.git && !dir.join(".git").exists() {
-        git = Command::new("git")
-            .args(["init", "--quiet", "--initial-branch=main"])
-            .current_dir(dir)
-            .status()
-            .is_ok_and(|s| s.success());
-    }
-    emit(
-        json_output,
-        &json!({ "library": name, "dir": dir, "files": written, "git": git }),
-        || {
-            println!(
-                "Created the library {} in {}.",
-                name.if_supports_color(Stdout, |t| t.bold()),
-                dir.display()
-            );
-            println!("Next: `stemma new <Module>` to add a document, then `stemma check`.");
-        },
-    )
 }
 
 /// Options of `stemma new`.
@@ -191,11 +93,11 @@ pub fn new(options: NewOptions, json_output: bool) -> Result<()> {
         json_output,
         &json!({ "module": module, "kind": kind, "path": path }),
         || {
-            println!(
-                "Created the {described} {} ({}).",
-                module.if_supports_color(Stdout, |t| t.bold()),
-                path.strip_prefix(&library.dir).unwrap_or(&path).display()
-            )
+            ui::success(format!(
+                "Created the {described} {} {}",
+                ui::bold(&module),
+                ui::dim(path.strip_prefix(&library.dir).unwrap_or(&path).display())
+            ))
         },
     )
 }
@@ -213,6 +115,13 @@ fn disk_diagnostics(library: &Library) -> Result<Vec<String>> {
             ));
         }
     }
+    if !crate::agents_md::is_current(&library.dir) {
+        out.push(
+            "AGENTS.md lacks the current block stemma keeps in it; `stemma claude` or \
+             `stemma codex` writes it."
+                .into(),
+        );
+    }
     for (i, m) in listed.iter().enumerate() {
         if listed[..i].contains(m) {
             out.push(format!(
@@ -224,12 +133,27 @@ fn disk_diagnostics(library: &Library) -> Result<Vec<String>> {
 }
 
 /// Builds the library and extracts its report, or explains why it could not.
-fn build_and_extract(library: &Library) -> Result<std::result::Result<Report, String>> {
-    let build = lake::build(library)?;
+pub fn build_and_extract(
+    library: &Library,
+    json_output: bool,
+) -> Result<std::result::Result<Report, String>> {
+    let spinner = ui::Spinner::start("Building the library", json_output);
+    let build = lake::build(library);
+    spinner.stop();
+    let build = build?;
     if !build.success {
         return Ok(Err(lake::problems(&build.output)));
     }
-    Ok(Ok(lake::extract(library)?))
+    let spinner = ui::Spinner::start("Reading its state", json_output);
+    let report = lake::extract(library);
+    spinner.stop();
+    Ok(Ok(report?))
+}
+
+/// Says that the library does not build, with Lake's errors.
+pub fn show_build_errors(output: &str) {
+    ui::error("The library does not build:");
+    println!("{output}");
 }
 
 /// The outcome of every check of the specification.
@@ -248,7 +172,7 @@ impl Checks {
 }
 
 /// Runs every check of the specification on a library.
-pub fn run_checks(library: &Library) -> Result<Checks> {
+pub fn run_checks(library: &Library, json_output: bool) -> Result<Checks> {
     let mut problems = disk_diagnostics(library)?;
     let version = env!("CARGO_PKG_VERSION");
     if library.config.library.stemma != version {
@@ -257,7 +181,7 @@ pub fn run_checks(library: &Library) -> Result<Checks> {
             library.config.library.stemma
         ));
     }
-    let (build, report) = match build_and_extract(library)? {
+    let (build, report) = match build_and_extract(library, json_output)? {
         Ok(report) => {
             for d in &report.diagnostics {
                 problems.push(match (&d.module, d.line) {
@@ -283,7 +207,7 @@ pub fn check(json_output: bool) -> Result<bool> {
     let library = Library::find(Path::new("."))?;
     let Checks {
         problems, build, ..
-    } = run_checks(&library)?;
+    } = run_checks(&library, json_output)?;
     let build_errors = build;
     let ok = problems.is_empty() && build_errors.is_none();
     emit(
@@ -291,20 +215,13 @@ pub fn check(json_output: bool) -> Result<bool> {
         &json!({ "ok": ok, "build": build_errors, "problems": problems }),
         || {
             if let Some(output) = &build_errors {
-                println!(
-                    "{}",
-                    "The library does not build:".if_supports_color(Stdout, |t| t.red())
-                );
-                println!("{output}");
+                show_build_errors(output);
             }
             for p in &problems {
-                println!("{} {p}", "error:".if_supports_color(Stdout, |t| t.red()));
+                ui::error(p);
             }
             if ok {
-                println!(
-                    "{}",
-                    "Every check passes.".if_supports_color(Stdout, |t| t.green())
-                );
+                ui::success("Every check passes.");
             }
         },
     )?;
@@ -314,10 +231,10 @@ pub fn check(json_output: bool) -> Result<bool> {
 /// `stemma status`: the state of every environment.
 pub fn status(json_output: bool) -> Result<bool> {
     let library = Library::find(Path::new("."))?;
-    let report = match build_and_extract(&library)? {
+    let report = match build_and_extract(&library, json_output)? {
         Ok(report) => report,
         Err(output) => {
-            println!("The library does not build:\n{output}");
+            show_build_errors(&output);
             return Ok(false);
         }
     };
@@ -343,13 +260,28 @@ pub fn status(json_output: bool) -> Result<bool> {
         println!("{}", serde_json::to_string_pretty(&value)?);
         return Ok(true);
     }
+    let count = |state: &str| {
+        report
+            .environments
+            .iter()
+            .filter(|e| e.state.as_deref() == Some(state))
+            .count()
+    };
+    let count_signature =
+        |state: Signature| signatures.iter().filter(|s| **s == Some(state)).count();
+    ui::heading(&library.config.library.title);
     println!(
         "{}\n",
-        library
-            .config
-            .library
-            .title
-            .if_supports_color(Stdout, |t| t.bold())
+        ui::dim(format!(
+            "{} proved · {} pending · {} cited · {} not formalized · {} signed · {} unsigned · {} stale",
+            count("proved"),
+            count("pending"),
+            count("cited"),
+            count("notFormalized"),
+            count_signature(Signature::Signed),
+            count_signature(Signature::Unsigned),
+            count_signature(Signature::Stale),
+        ))
     );
     for module in &report.modules {
         let entries: Vec<_> = report
@@ -358,55 +290,39 @@ pub fn status(json_output: bool) -> Result<bool> {
             .zip(&signatures)
             .filter(|(e, _)| e.record.module == module.name)
             .collect();
-        println!(
-            "{} {}",
-            module.name.if_supports_color(Stdout, |t| t.bold()),
-            format!("({})", module.kind).if_supports_color(Stdout, |t| t.dimmed())
-        );
+        println!("{} {}", ui::bold(&module.name), ui::dim(&module.kind));
+        if entries.is_empty() {
+            println!("  {}", ui::dim("no environments"));
+        }
         for (e, signature) in entries {
             let r = &e.record;
-            let label = r.label.as_deref().unwrap_or("-");
+            let label = r.label.as_deref().unwrap_or("·");
             let central = if r.central { "central" } else { "" };
             let state = match e.state.as_deref() {
-                Some("notFormalized") => "not formalized".to_string(),
-                Some(other) => other.to_string(),
-                None => {
+                Some("notFormalized") => ui::state("not formalized", 16),
+                Some(other) => ui::state(other, 16),
+                None => ui::dim(format!(
+                    "{:<16}",
                     r.of.as_ref()
-                        .map_or(String::new(), |of| format!("proof of {of}"))
-                }
-            };
-            let state = format!("{state:<16}");
-            let state = match e.state.as_deref() {
-                Some("proved") => state.if_supports_color(Stdout, |t| t.green()).to_string(),
-                Some("pending") => state.if_supports_color(Stdout, |t| t.yellow()).to_string(),
-                Some("cited") => state.if_supports_color(Stdout, |t| t.cyan()).to_string(),
-                Some("notFormalized") => state.if_supports_color(Stdout, |t| t.red()).to_string(),
-                _ => state,
+                        .map_or(String::new(), |of| format!("proves {of}"))
+                )),
             };
             let signature = match signature {
-                Some(Signature::Signed) => "signed"
-                    .if_supports_color(Stdout, |t| t.green())
-                    .to_string(),
-                Some(Signature::Unsigned) => "unsigned"
-                    .if_supports_color(Stdout, |t| t.yellow())
-                    .to_string(),
-                Some(Signature::Stale) => {
-                    "stale".if_supports_color(Stdout, |t| t.red()).to_string()
-                }
+                Some(Signature::Signed) => ui::state("signed", 0),
+                Some(Signature::Unsigned) => ui::state("unsigned", 0),
+                Some(Signature::Stale) => ui::state("stale", 0),
                 None => String::new(),
             };
             println!(
-                "  {:<14} {:<24} {:<8} {state} {signature}",
-                r.display, label, central
+                "  {:<14} {:<24} {} {state} {signature}",
+                r.display,
+                label,
+                ui::dim(format!("{central:<8}"))
             );
         }
     }
     for d in &report.diagnostics {
-        println!(
-            "{} {}",
-            "error:".if_supports_color(Stdout, |t| t.red()),
-            d.message
-        );
+        ui::error(&d.message);
     }
     Ok(true)
 }

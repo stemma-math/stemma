@@ -1,17 +1,15 @@
 //! `stemma sign`: a person signs central environments, in their own terminal.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::{BufRead, IsTerminal, Write};
+use std::io::IsTerminal;
 use std::path::Path;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
-use owo_colors::{OwoColorize, Stream::Stdout};
 use serde::Deserialize;
 
 use crate::agent::{self, SESSION_VARIABLE};
-use crate::lake;
 use crate::library::Library;
 use crate::report::{Environment, Signature};
 
@@ -147,23 +145,6 @@ fn proposing_agent(library: &Library, module: &str) -> Option<String> {
     (!agent.is_empty()).then_some(agent)
 }
 
-/// Asks a yes-or-no question on the terminal.
-fn confirm(question: &str) -> Result<bool> {
-    print!("{question} [y/N] ");
-    std::io::stdout().flush()?;
-    let mut answer = String::new();
-    std::io::stdin().lock().read_line(&mut answer)?;
-    Ok(matches!(answer.trim(), "y" | "Y" | "yes"))
-}
-
-/// Indents every line of a text.
-fn indented(text: &str) -> String {
-    text.lines()
-        .map(|l| format!("    {l}"))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 /// `stemma sign`: shows what awaits a signature, grouped by cause, and signs
 /// what the person confirms.
 pub fn sign(labels: Vec<String>, commit: bool) -> Result<bool> {
@@ -189,15 +170,18 @@ pub fn sign(labels: Vec<String>, commit: bool) -> Result<bool> {
             );
         }
     }
-    let build = lake::build(&library)?;
-    if !build.success {
-        println!(
-            "The library does not build:\n{}",
-            lake::problems(&build.output)
-        );
-        return Ok(false);
-    }
-    let report = lake::extract(&library)?;
+    cliclack::intro(crate::ui::bold(" stemma sign "))?;
+    let spinner = cliclack::spinner();
+    spinner.start("Building the library and reading its state");
+    let report = crate::commands::build_and_extract(&library, true);
+    spinner.clear();
+    let report = match report? {
+        Ok(report) => report,
+        Err(output) => {
+            cliclack::outro_cancel(format!("The library does not build:\n{output}"))?;
+            return Ok(false);
+        }
+    };
     let mut groups: BTreeMap<String, Vec<&Environment>> = BTreeMap::new();
     let mut unformalized = Vec::new();
     for env in &report.environments {
@@ -219,13 +203,13 @@ pub fn sign(labels: Vec<String>, commit: bool) -> Result<bool> {
             .push(env);
     }
     if !unformalized.is_empty() {
-        println!(
-            "Not formalized yet, so they cannot be signed: {}.\n",
+        cliclack::log::warning(format!(
+            "Not formalized yet, so they cannot be signed: {}.",
             unformalized.join(", ")
-        );
+        ))?;
     }
     if groups.is_empty() {
-        println!("Nothing awaits a signature.");
+        cliclack::outro("Nothing awaits a signature.")?;
         return Ok(true);
     }
     let signer = agent::person();
@@ -237,22 +221,26 @@ pub fn sign(labels: Vec<String>, commit: bool) -> Result<bool> {
         } else {
             format!("Stale: {reason} ({})", envs.len())
         };
-        println!("{}\n", heading.if_supports_color(Stdout, |t| t.bold()));
+        cliclack::log::step(crate::ui::bold(heading))?;
         for env in envs {
             let r = &env.record;
-            println!(
-                "{} {}  {}",
-                r.display.if_supports_color(Stdout, |t| t.bold()),
-                r.label.as_deref().unwrap_or_default(),
-                format!("({}, line {})", r.module, r.line)
-                    .if_supports_color(Stdout, |t| t.dimmed())
-            );
-            println!("  Prose:\n{}", indented(&r.prose));
-            println!("  Lean:\n{}\n", indented(&r.lean));
+            cliclack::note(
+                format!(
+                    "{} {}  {}",
+                    r.display,
+                    r.label.as_deref().unwrap_or_default(),
+                    crate::ui::dim(format!("{}, line {}", r.module, r.line))
+                ),
+                format!("{}\n\n{}", r.prose, r.lean),
+            )?;
         }
-        println!("Sign only if the prose and the Lean say the same thing.");
-        if !confirm(&format!("Sign these {}?", envs.len()))? {
-            println!();
+        let sign = cliclack::confirm(format!(
+            "Sign these {}? Only if the prose and the Lean say the same thing.",
+            envs.len()
+        ))
+        .initial_value(false)
+        .interact()?;
+        if !sign {
             continue;
         }
         let dir = library.dir.join("signatures");
@@ -264,10 +252,9 @@ pub fn sign(labels: Vec<String>, commit: bool) -> Result<bool> {
             std::fs::write(&path, signature_file(env, &signer, &signed, by.as_deref()))?;
             written.push(label.to_string());
         }
-        println!();
     }
     if written.is_empty() {
-        println!("Nothing was signed.");
+        cliclack::outro("Nothing was signed.")?;
         return Ok(true);
     }
     if commit {
@@ -292,9 +279,9 @@ pub fn sign(labels: Vec<String>, commit: bool) -> Result<bool> {
             committed.success(),
             "the signature files are written, but committing them failed"
         );
-        println!("Signed and committed: {}.", written.join(", "));
+        cliclack::outro(format!("Signed and committed: {}.", written.join(", ")))?;
     } else {
-        println!("Signed (not committed): {}.", written.join(", "));
+        cliclack::outro(format!("Signed (not committed): {}.", written.join(", ")))?;
     }
     Ok(true)
 }
