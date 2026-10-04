@@ -211,7 +211,7 @@ before they are used (for example, a `hypothesis` named "Hypothesis" on top of
 
 | Mark | On | Required | Meaning |
 |---|---|---|---|
-| `label` | `definition`, `statement` | yes | A stable identifier, unique in the library, that readings, papers and signatures cite. It cannot change once signed. |
+| `label` | `definition`, `statement` | yes | A stable identifier, unique in the library, that readings, papers and signatures cite: lowercase letters, digits, `-` and `.` (`even-add`, `groups.lagrange`). It cannot change once signed. |
 | `label` | `proof`, `remark` | no | The same, when something needs to cite them. |
 | `central` | `definition`, `statement` | yes, `true` or `false` | Whether the environment is central: signed and audited (§3). |
 | `of` | `proof` | yes | The label of the definition or statement it proves, which must already exist, in the same module or an imported one. |
@@ -351,6 +351,40 @@ but to make sure that neither an agent's shortcut nor a person's offhand
 - Agents prepare signatures but never make them: when a pull request needs
   signatures, the agent tells the person which ones, and why.
 
+### Signature files
+
+Each signed environment has one file, `signatures/<label>.toml`, holding its
+current signature; earlier ones are in the repository's history.
+
+```toml
+label = "even-add"
+kind = "statement"
+central = true
+# cited = "Key2001, Prop 3.4"
+
+signer = "alice"                  # the signer's forge account
+signed = 2026-10-04T18:20:00Z
+agent = "claude-opus-5-5"         # the agent that proposed the change, if any
+
+[fingerprints]
+version = 1                       # the fingerprint algorithm
+prose = "sha256:…"
+formal = "sha256:…"
+
+# One fingerprint per declaration in the closure, so that Stemma can say
+# what changed without rebuilding the signed state.
+[closure]
+"IsEven" = "sha256:…"
+"IsEven.add" = "sha256:…"
+"Nat.mul" = "sha256:…"
+```
+
+- `signer` and `signed` are informative: the proof of who signed is the
+  commit's signature, and the checks require the two to agree.
+- `version` names the fingerprint algorithm, so that changing it never makes
+  signatures stale silently: `stemma` computes every version, and migrates
+  signatures explicitly.
+
 ### Read-backs
 
 A read-back is a voluntary aid to auditing, not part of signing.
@@ -471,13 +505,12 @@ The first forge Stemma supports is GitHub:
 
 ## Open questions
 
-1. **Signatures.** The format of `signatures/<label>.toml`.
-2. **Private work.** Whether a person can keep modules private within the
+1. **Private work.** Whether a person can keep modules private within the
    group, and where they live.
-3. **Readings** (`readings/`). Their format, how they cite the
+2. **Readings** (`readings/`). Their format, how they cite the
    library, and whether a paper lives in the library repository or in its
    own, citing a release of the library.
-4. **`stemma.toml`.** What it holds besides members and policy: the library's
+3. **`stemma.toml`.** What it holds besides members and policy: the library's
    title, the pinned `stemma` version.
-5. **References across libraries.** How a document cites an environment of
+4. **References across libraries.** How a document cites an environment of
    another Stemma library it depends on.
