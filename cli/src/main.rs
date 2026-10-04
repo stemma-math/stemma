@@ -14,6 +14,7 @@ mod sign;
 mod site;
 mod templates;
 mod ui;
+mod upgrade;
 mod verify;
 
 use std::path::PathBuf;
@@ -139,6 +140,15 @@ enum Commands {
         /// `origin/main`.
         #[arg(long)]
         base: Option<String>,
+    },
+    /// Move the library to this version of stemma.
+    Upgrade {
+        /// Show what would change without changing anything.
+        #[arg(long)]
+        dry_run: bool,
+        /// Do not update the dependencies (`lake update`).
+        #[arg(long)]
+        no_update: bool,
     },
     /// Hooks agents run; not meant to be called by hand.
     #[command(hide = true)]
@@ -266,6 +276,7 @@ fn main() -> ExitCode {
         Commands::Share => share::share(cli.json),
         Commands::Sign { labels, no_commit } => sign::sign(labels, !no_commit),
         Commands::Verify { base } => verify::verify(base, cli.json),
+        Commands::Upgrade { dry_run, no_update } => upgrade::upgrade(dry_run, !no_update, cli.json),
         Commands::Hook { event } => hook(&event),
         Commands::Claude(args) => start(agent::Agent::Claude, args),
         Commands::Codex(args) => start(agent::Agent::Codex, args),
