@@ -44,6 +44,7 @@ fn init_creates_the_layout() {
         "AGENTS.md",
         "README.md",
         ".gitignore",
+        ".github/workflows/stemma.yml",
     ] {
         assert!(lib.join(file).is_file(), "missing {file}");
     }

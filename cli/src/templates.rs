@@ -30,6 +30,10 @@ const TEMPLATES: &[(&str, &str)] = &[
         include_str!("../templates/library/gitignore.jinja"),
     ),
     (
+        "library/github/stemma.yml",
+        include_str!("../templates/library/github/stemma.yml.jinja"),
+    ),
+    (
         "module/document.lean",
         include_str!("../templates/module/document.lean.jinja"),
     ),

@@ -11,6 +11,7 @@ mod share;
 mod sign;
 mod site;
 mod templates;
+mod verify;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -112,6 +113,13 @@ enum Commands {
         #[arg(long)]
         no_commit: bool,
     },
+    /// Check what the forge requires of a pull request: signatures and policy.
+    Verify {
+        /// The base to compare with. By default, the pull request's base, or
+        /// `origin/main`.
+        #[arg(long)]
+        base: Option<String>,
+    },
     /// Start Claude Code, equipped to work in the library.
     Claude(AgentArgs),
     /// Start Codex, equipped to work in the library.
@@ -207,6 +215,7 @@ fn main() -> ExitCode {
         ),
         Commands::Share => share::share(cli.json),
         Commands::Sign { labels, no_commit } => sign::sign(labels, !no_commit),
+        Commands::Verify { base } => verify::verify(base, cli.json),
         Commands::Claude(args) => start(agent::Agent::Claude, args),
         Commands::Codex(args) => start(agent::Agent::Codex, args),
     };

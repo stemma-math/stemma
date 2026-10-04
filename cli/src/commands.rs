@@ -92,8 +92,10 @@ pub fn init(options: InitOptions, json_output: bool) -> Result<()> {
         "mathlib": options.mathlib,
         "mathlib_rev": mathlib_rev(),
     });
-    std::fs::create_dir_all(dir.join(&name))
-        .with_context(|| format!("creating {}", dir.display()))?;
+    for sub in [name.as_str(), ".github/workflows"] {
+        std::fs::create_dir_all(dir.join(sub))
+            .with_context(|| format!("creating {}", dir.display()))?;
+    }
     let files = [
         ("stemma.toml", "library/stemma.toml"),
         ("lakefile.toml", "library/lakefile.toml"),
@@ -101,6 +103,7 @@ pub fn init(options: InitOptions, json_output: bool) -> Result<()> {
         ("AGENTS.md", "library/AGENTS.md"),
         ("README.md", "library/README.md"),
         (".gitignore", "library/gitignore"),
+        (".github/workflows/stemma.yml", "library/github/stemma.yml"),
     ];
     let mut written = Vec::new();
     for (file, template) in files {

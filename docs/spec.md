@@ -509,7 +509,7 @@ The first forge Stemma supports is GitHub:
 | Piece | On GitHub |
 |---|---|
 | `main` changes only through pull requests | A ruleset on `main`: pull requests required, no direct or forced pushes |
-| Required checks | A GitHub Actions workflow written by `stemma` (`.github/workflows/stemma.yml`), marked as a required status check |
+| Required checks | A GitHub Actions workflow written by `stemma` (`.github/workflows/stemma.yml`) that runs `stemma check` and `stemma verify`, marked as a required status check |
 | Merging by itself | GitHub's auto-merge |
 | Required reviews | GitHub approvals, whose authors the policy check matches against roles |
 | The policy read from `main` | The policy job reads `stemma.toml` from the base commit |
@@ -550,6 +550,7 @@ The first forge Stemma supports is GitHub:
 | `stemma status` | Shows states: not formalized, pending, signatures, distance from `main` |
 | `stemma preview` | Builds the site and serves it locally |
 | `stemma share` | Brings `main` in, and opens or updates the pull request |
+| `stemma verify` | What the forge requires of a pull request beyond `stemma check`: signatures and the group's policy |
 | `stemma sign` | Signs, in an interactive terminal |
 | `stemma readback` | Makes read-backs and shows them in a local web page |
 | `stemma claude`, `stemma codex` | Start an equipped agent |
