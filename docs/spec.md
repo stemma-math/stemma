@@ -27,7 +27,7 @@ library's Lean name, for example `Algebra`.
 ├── references.bib         # the bibliography
 ├── signatures/            # human signatures, one file per signed result
 │   └── <label>.toml
-├── readings/              # curated readings of the library: guides, papers
+├── readings/              # curated readings: guides, papers (reserved)
 │   └── <reading>/
 ├── .github/               # the forge's checks and rules (GitHub)
 ├── AGENTS.md              # points agents at `stemma`
@@ -80,6 +80,7 @@ Who writes each entry:
 - A paper is a reading whose destination is a journal rather than the site.
   Guides and papers are the same kind of thing, and both cite the library in
   the same way.
+- `readings/` is reserved for them; their format is not specified yet.
 
 ### Agent instructions are not copied into the library
 
@@ -97,6 +98,23 @@ versions: each release of `stemma` names a combination of Lean, Verso and
 Mathlib that it has checked works together (the packages they share pinned to
 the same revisions), and `stemma` moves a library from one combination to
 another as a single change.
+
+### Configuration
+
+`stemma.toml` names the library and its members:
+
+```toml
+[library]
+name = "Algebra"            # the library's Lean name
+title = "Algebra"           # the site's title
+stemma = "0.1.0"            # the stemma version, which fixes Lean, Verso and Mathlib
+
+[members]
+alice = { roles = ["maintainer", "signer"] }
+
+[policy]                    # optional (§4)
+[signatures]                # optional (§3)
+```
 
 ### Not committed
 
@@ -503,14 +521,48 @@ The first forge Stemma supports is GitHub:
 - `stemma` sets the repository up (rules, workflow, Pages) when it creates the
   library.
 
-## Open questions
+## 5. Agents
 
-1. **Private work.** Whether a person can keep modules private within the
-   group, and where they live.
-2. **Readings** (`readings/`). Their format, how they cite the
-   library, and whether a paper lives in the library repository or in its
-   own, citing a release of the library.
-3. **`stemma.toml`.** What it holds besides members and policy: the library's
-   title, the pinned `stemma` version.
-4. **References across libraries.** How a document cites an environment of
-   another Stemma library it depends on.
+- `stemma claude` and `stemma codex` start the agent in the library with the
+  instructions, skills and permissions of the library's `stemma` version. They
+  synchronize nothing; they may show a summary of `stemma status`.
+- **Permissions.** The agent may not write the files only `stemma` writes
+  (§1), nor `signatures/`; it may not run `stemma sign`, push to `main` or
+  force a push.
+- **Authorship.** The person is the author of every commit. The agent adds a
+  trailer naming itself:
+
+  ```
+  Agent: <model>
+  ```
+
+- **Skills** teach the agent to write documents and environments, create
+  modules, share work, resolve conflicts, prepare signatures and ask for
+  read-backs.
+
+## 6. Command line
+
+| Command | What it does |
+|---|---|
+| `stemma init` | Creates a library: layout, `stemma.toml`, dependencies, forge setup |
+| `stemma new` | Creates a module (document or Lean) and adds it to the table of contents |
+| `stemma check` | Runs every check of this specification |
+| `stemma status` | Shows states: not formalized, pending, signatures, distance from `main` |
+| `stemma preview` | Builds the site and serves it locally |
+| `stemma share` | Brings `main` in, and opens or updates the pull request |
+| `stemma sign` | Signs, in an interactive terminal |
+| `stemma readback` | Makes read-backs and shows them in a local web page |
+| `stemma claude`, `stemma codex` | Start an equipped agent |
+
+Every command has a `--json` output for agents.
+
+## Deferred
+
+These are left for later versions:
+
+- **Private work.** In this version there is none: working branches already
+  keep work out of `main` until it is shared.
+- **Readings.** Their format, how they cite the library, and where papers
+  live.
+- **References across libraries.** How a document cites an environment of
+  another Stemma library it depends on.
