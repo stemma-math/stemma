@@ -3,4 +3,8 @@ name = "{{ name }}"
 title = "{{ title }}"
 stemma = "{{ version }}"
 
+# The group's members, by forge account, and their roles.
 [members]
+{%- for member in members %}
+{{ member | tojson }} = { roles = ["maintainer", "signer"] }
+{%- endfor %}

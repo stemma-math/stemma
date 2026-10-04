@@ -65,6 +65,9 @@ enum Commands {
         /// Push main to the remote.
         #[arg(long)]
         push: bool,
+        /// Another member, by forge account (repeatable). You are always one.
+        #[arg(long = "member")]
+        members: Vec<String>,
         /// Ask nothing: take every default.
         #[arg(long, short)]
         yes: bool,
@@ -202,6 +205,7 @@ fn main() -> ExitCode {
             commit,
             remote,
             push,
+            members,
             yes,
         } => init::init(
             init::Options {
@@ -215,6 +219,7 @@ fn main() -> ExitCode {
                 commit: commit.then_some(true),
                 remote,
                 push: push.then_some(true),
+                members,
                 yes,
             },
             cli.json,

@@ -117,6 +117,10 @@ alice = { roles = ["maintainer", "signer"] }
 [signatures]                # optional (§3)
 ```
 
+`stemma init` makes the person who creates the library its first member, as
+maintainer and signer, so that someone can approve the changes the policy
+reserves to maintainers.
+
 ### Not committed
 
 `.lake/` (Lean builds and dependencies), the built site and other build

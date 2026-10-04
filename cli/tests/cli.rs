@@ -28,7 +28,15 @@ fn init_creates_the_layout() {
     let dir = scratch("init");
     let out = stemma(
         &dir,
-        &["init", "group-theory", "--no-git", "--title", "Groups"],
+        &[
+            "init",
+            "group-theory",
+            "--no-git",
+            "--title",
+            "Groups",
+            "--member",
+            "bob",
+        ],
     );
     assert!(
         out.status.success(),
@@ -49,6 +57,7 @@ fn init_creates_the_layout() {
         assert!(lib.join(file).is_file(), "missing {file}");
     }
     let config = read(lib.join("stemma.toml"));
+    assert!(config.contains("\"bob\" = { roles = [\"maintainer\", \"signer\"] }"));
     assert!(config.contains("name = \"GroupTheory\""));
     assert!(config.contains("title = \"Groups\""));
     let lakefile = read(lib.join("lakefile.toml"));
