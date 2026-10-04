@@ -33,6 +33,7 @@ test:
 # Run every check: formatting, Clippy, the tests and the Lean build.
 [group('development')]
 check:
+    cargo metadata --locked --format-version 1 > /dev/null
     nix flake check
     cargo clippy --all-targets -- --deny warnings
     just test
