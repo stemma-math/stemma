@@ -17,20 +17,29 @@ description: How work is saved and shared in a Stemma library — the person's w
 ## Sharing
 
 Sharing is the only moment that looks at `main`. When the person wants their
-work to reach the library:
+work to reach the library, commit everything and run:
 
-1. `stemma check --json` must pass.
-2. Bring `main` in: `git fetch origin`, then `git merge origin/main`.
-3. Resolve conflicts. A conflict about content (two people changed the same
-   statement differently) is the person's decision: explain it in
-   mathematical terms, show both versions, recommend, and ask. Imports in the
-   table of contents that conflict usually just both stay.
-4. `stemma check --json` again, commit, push.
-5. Open the pull request from the working branch to `main` (`gh pr create`),
-   or update the open one. Its description lists the mathematical changes,
-   the decisions taken, and the signatures it needs (see `stemma-signatures`).
-6. If part of the work needs signatures and part does not, offer to split it
-   into two pull requests, so that the second waits without holding back the
-   first. The person decides.
+```sh
+stemma share --json
+```
+
+It checks the library, brings `main` in, checks again, pushes the working
+branch and opens or updates the pull request. Its answer says what happened:
+
+- `conflicts`: bringing in `main` left conflicts in these files. Resolve them.
+  A conflict about content (two people changed the same statement or prose
+  differently) is the person's decision: explain it in mathematical terms,
+  show both versions, recommend, and ask. Imports in the table of contents
+  that conflict usually just both stay. Then commit and share again.
+- `problems` or `build`: a check fails after bringing in `main`. Fix it,
+  commit, and share again.
+- `pull_request`: the pull request's address. When it is empty, `gh` could
+  not open it: tell the person.
+- `needs_signatures`: signed environments the pull request leaves stale. It
+  will not be merged until they are signed (see `stemma-signatures`).
+
+If part of the work needs signatures and part does not, offer to split it into
+two pull requests, so that the second waits without holding back the first.
+The person decides.
 
 Never squash, never force-push, never push to `main`.

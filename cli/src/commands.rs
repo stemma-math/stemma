@@ -229,10 +229,24 @@ fn build_and_extract(library: &Library) -> Result<std::result::Result<Report, St
     Ok(Ok(lake::extract(library)?))
 }
 
-/// `stemma check`: every check of the specification. Fails when one does.
-pub fn check(json_output: bool) -> Result<bool> {
-    let library = Library::find(Path::new("."))?;
-    let mut problems = disk_diagnostics(&library)?;
+/// The outcome of every check of the specification.
+pub struct Checks {
+    pub problems: Vec<String>,
+    /// Lake's errors, when the library does not build.
+    pub build: Option<String>,
+    /// The library's report, when it builds.
+    pub report: Option<Report>,
+}
+
+impl Checks {
+    pub fn ok(&self) -> bool {
+        self.problems.is_empty() && self.build.is_none()
+    }
+}
+
+/// Runs every check of the specification on a library.
+pub fn run_checks(library: &Library) -> Result<Checks> {
+    let mut problems = disk_diagnostics(library)?;
     let version = env!("CARGO_PKG_VERSION");
     if library.config.library.stemma != version {
         problems.push(format!(
@@ -240,20 +254,34 @@ pub fn check(json_output: bool) -> Result<bool> {
             library.config.library.stemma
         ));
     }
-    let build_errors = match build_and_extract(&library)? {
+    let (build, report) = match build_and_extract(library)? {
         Ok(report) => {
-            for d in report.diagnostics {
-                problems.push(match (d.module, d.line) {
+            for d in &report.diagnostics {
+                problems.push(match (&d.module, d.line) {
                     (Some(m), Some(l)) => format!("{m}:{l}: {}", d.message),
                     (Some(m), None) => format!("{m}: {}", d.message),
-                    _ => d.message,
+                    _ => d.message.clone(),
                 });
             }
-            None
+            (None, Some(report))
         }
-        Err(output) => Some(output),
+        Err(output) => (Some(output), None),
     };
     problems.dedup();
+    Ok(Checks {
+        problems,
+        build,
+        report,
+    })
+}
+
+/// `stemma check`: every check of the specification. Fails when one does.
+pub fn check(json_output: bool) -> Result<bool> {
+    let library = Library::find(Path::new("."))?;
+    let Checks {
+        problems, build, ..
+    } = run_checks(&library)?;
+    let build_errors = build;
     let ok = problems.is_empty() && build_errors.is_none();
     emit(
         json_output,

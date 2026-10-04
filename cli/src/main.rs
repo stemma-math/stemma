@@ -6,6 +6,7 @@ mod config;
 mod lake;
 mod library;
 mod report;
+mod share;
 mod sign;
 mod site;
 mod templates;
@@ -76,6 +77,8 @@ enum Commands {
         #[arg(long, default_value_t = 8000)]
         port: u16,
     },
+    /// Bring `main` in, and open or update the pull request.
+    Share,
     /// Sign central environments, in your own terminal.
     Sign {
         /// Sign only these labels.
@@ -157,6 +160,7 @@ fn main() -> ExitCode {
         Commands::Check => commands::check(cli.json),
         Commands::Status => commands::status(cli.json),
         Commands::Preview { no_serve, port } => site::preview(!no_serve, port, cli.json),
+        Commands::Share => share::share(cli.json),
         Commands::Sign { labels, no_commit } => sign::sign(labels, !no_commit),
         Commands::Claude(args) => start(agent::Agent::Claude, args),
         Commands::Codex(args) => start(agent::Agent::Codex, args),
