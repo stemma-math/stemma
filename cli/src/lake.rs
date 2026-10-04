@@ -40,10 +40,16 @@ pub fn problems(output: &str) -> String {
         .join("\n")
 }
 
-/// Extracts the report of a built library with `stemma-extract`.
+/// Extracts the report of a built library with `stemma-extract`, which writes
+/// it to a file of `.stemma/`.
 pub fn extract(library: &Library) -> Result<Report> {
+    let dir = library.dir.join(".stemma");
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join("report.json");
+    let _ = std::fs::remove_file(&path);
     let output = Command::new("lake")
         .args(["exe", "stemma-extract", library.name()])
+        .arg(&path)
         .current_dir(&library.dir)
         .stdin(Stdio::null())
         .output()
@@ -54,8 +60,6 @@ pub fn extract(library: &Library) -> Result<Report> {
             String::from_utf8_lossy(&output.stderr)
         );
     }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    // Lake may print build progress before the report, which is the last line.
-    let json = stdout.lines().last().unwrap_or_default();
-    serde_json::from_str(json).context("reading the report of stemma-extract")
+    let json = std::fs::read_to_string(&path).context("reading the report of stemma-extract")?;
+    serde_json::from_str(&json).context("reading the report of stemma-extract")
 }

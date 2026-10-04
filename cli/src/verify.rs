@@ -44,6 +44,9 @@ fn git(dir: &Path, args: &[&str]) -> Result<String> {
 pub enum Missing {
     /// A signed environment is stale: a signer must sign it again.
     Signature { label: String },
+    /// A signature applies to no central environment any more (it was
+    /// removed, made not central, or relabelled): a signer must withdraw it.
+    Withdrawal { label: String },
     /// A kind of change needs an approval from a member with one of `roles`.
     Approval { change: String, roles: Vec<String> },
     /// Something is wrong that no signature or approval fixes.
@@ -56,6 +59,10 @@ impl Missing {
             Missing::Signature { label } => {
                 format!("The signature of '{label}' is stale: it must be signed again.")
             }
+            Missing::Withdrawal { label } => format!(
+                "The signature of '{label}' applies to no central environment: a signer must \
+                 withdraw it."
+            ),
             Missing::Approval { change, roles } => format!(
                 "A change of kind '{change}' needs the approval of a member with one of \
                  these roles: {}.",
@@ -68,7 +75,9 @@ impl Missing {
     /// Whether `config`'s `member` can supply it, by signing or approving.
     pub fn can_supply(&self, config: &Config, member: &str) -> bool {
         match self {
-            Missing::Signature { .. } => config.has_role(member, &["signer".into()]),
+            Missing::Signature { .. } | Missing::Withdrawal { .. } => {
+                config.has_role(member, &["signer".into()])
+            }
             Missing::Approval { roles, .. } => config.has_role(member, roles),
             Missing::Problem { .. } => false,
         }
@@ -91,8 +100,9 @@ struct SignatureSigner {
     signer: String,
 }
 
-/// The kinds of change from `base` to HEAD that the policy may ask approvals for.
-pub fn kinds(dir: &Path, base: &str, report: Option<&Report>) -> Result<BTreeSet<String>> {
+/// The kinds of change from `base` to HEAD that the policy may ask approvals
+/// for, from the files the change touches.
+pub fn kinds(dir: &Path, base: &str) -> Result<BTreeSet<String>> {
     let mut out = BTreeSet::new();
     let changed = git(dir, &["diff", "--name-only", &format!("{base}...HEAD")])?;
     for file in changed.lines() {
@@ -106,24 +116,52 @@ pub fn kinds(dir: &Path, base: &str, report: Option<&Report>) -> Result<BTreeSet
             out.insert("dependencies".to_string());
         }
     }
-    for env in report
-        .map(|r| r.environments.as_slice())
-        .unwrap_or_default()
-    {
-        let (true, Some(label)) = (env.is_central_claim(), &env.record.label) else {
-            continue;
-        };
-        let pattern = format!("label := \"{label}\"");
-        let lines = Command::new("git")
-            .args(["grep", "-h", "-F", "-e", &pattern, base, "--", "*.lean"])
-            .current_dir(dir)
-            .output()?;
-        let lines = String::from_utf8_lossy(&lines.stdout);
-        if !lines.lines().any(|l| l.contains("central := true")) {
-            out.insert("new-central".to_string());
-        }
-    }
     Ok(out)
+}
+
+/// The content of a revision: a digest of every file in it but signatures,
+/// made by git. It is what an approval approves: signatures added after it, or
+/// with it, do not change it; any other change does.
+pub fn content_id(dir: &Path, rev: &str) -> Result<String> {
+    let listing = git(dir, &["ls-tree", "-r", "--full-tree", rev])?;
+    let content: String = listing
+        .lines()
+        .filter(|line| {
+            line.split_once('\t')
+                .is_none_or(|(_, path)| !path.starts_with("signatures/"))
+        })
+        .map(|line| format!("{line}\n"))
+        .collect();
+    let mut child = Command::new("git")
+        .args(["hash-object", "--stdin"])
+        .current_dir(dir)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()?;
+    {
+        use std::io::Write;
+        child
+            .stdin
+            .take()
+            .context("writing to git")?
+            .write_all(content.as_bytes())?;
+    }
+    let out = child.wait_with_output()?;
+    anyhow::ensure!(out.status.success(), "`git hash-object` failed");
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// The value of a commit's trailer, if it has one.
+fn trailer(dir: &Path, sha: &str, key: &str) -> Result<String> {
+    git(
+        dir,
+        &[
+            "log",
+            "-1",
+            &format!("--format=%(trailers:key={key},valueonly,separator=%x2C)"),
+            sha,
+        ],
+    )
 }
 
 /// The files a commit changes, against its first parent (for a merge, what it
@@ -136,16 +174,7 @@ fn files_of(dir: &Path, sha: &str) -> Result<Vec<String>> {
 
 /// The kinds a commit approves, from its `Approve:` trailers.
 fn approved_kinds(dir: &Path, sha: &str) -> Result<Vec<String>> {
-    let text = git(
-        dir,
-        &[
-            "log",
-            "-1",
-            "--format=%(trailers:key=Approve,valueonly,separator=%x2C)",
-            sha,
-        ],
-    )?;
-    Ok(text
+    Ok(trailer(dir, sha, "Approve")?
         .split(',')
         .map(|k| k.trim().to_string())
         .filter(|k| !k.is_empty())
@@ -174,18 +203,28 @@ pub fn evaluate(library: &Library, base: &str, report: Option<&Report>) -> Resul
                     });
                 }
             }
+            // Every signature must apply to a central environment.
+            let central: BTreeSet<&str> = report
+                .environments
+                .iter()
+                .filter(|e| e.is_central_claim())
+                .filter_map(|e| e.record.label.as_deref())
+                .collect();
+            for label in signature_labels(dir)? {
+                if !central.contains(label.as_str()) {
+                    missing.push(Missing::Withdrawal { label });
+                }
+            }
         }
         None => notes.push(
-            "The library was not built: stale signatures and new central environments were \
-             not looked at."
-                .into(),
+            "The library was not built: stale and withdrawn signatures were not looked at.".into(),
         ),
     }
 
-    // Walk the change's commits in order. Signature files come in commits of
-    // their own, signed by a signer. Approvals are signed commits that touch
-    // nothing but signatures, and approve the content as it stands: any later
-    // change of content withdraws them.
+    // Signature files come in commits of their own, signed by a signer.
+    // Approvals are signed commits that touch nothing but signatures, and name
+    // the content they approve: they count only if it is the content now.
+    let current = content_id(dir, "HEAD")?;
     let commits = git(dir, &["rev-list", "--reverse", &format!("{base}..HEAD")])?;
     let mut approvals: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for sha in commits.lines() {
@@ -214,8 +253,6 @@ pub fn evaluate(library: &Library, base: &str, report: Option<&Report>) -> Resul
                     ),
                 });
             }
-            // A change of content withdraws every approval made before it.
-            approvals.clear();
             continue;
         }
         if signature_files.is_empty() && approves.is_empty() {
@@ -250,12 +287,22 @@ pub fn evaluate(library: &Library, base: &str, report: Option<&Report>) -> Resul
                 });
             }
         }
-        for kind in approves {
-            approvals.entry(kind).or_default().insert(member.clone());
+        if !approves.is_empty() {
+            let approved_content = trailer(dir, sha, "Approve-content")?;
+            if approved_content != current {
+                notes.push(format!(
+                    "The approval of {member} in commit {short} is for other content: the \
+                     change has changed since."
+                ));
+                continue;
+            }
+            for kind in approves {
+                approvals.entry(kind).or_default().insert(member.clone());
+            }
         }
     }
 
-    for kind in kinds(dir, base, report)? {
+    for kind in kinds(dir, base)? {
         let Some(roles) = base_config.review_roles(&kind) else {
             continue;
         };
@@ -282,6 +329,16 @@ pub fn evaluate(library: &Library, base: &str, report: Option<&Report>) -> Resul
         notes,
         approvals,
     })
+}
+
+/// The labels of the signature files at HEAD.
+fn signature_labels(dir: &Path) -> Result<Vec<String>> {
+    let listing = git(dir, &["ls-tree", "--name-only", "HEAD", "signatures/"])?;
+    Ok(listing
+        .lines()
+        .filter_map(|path| path.strip_prefix("signatures/")?.strip_suffix(".toml"))
+        .map(str::to_string)
+        .collect())
 }
 
 /// `stemma verify`: fails when the change may not be merged.

@@ -287,8 +287,37 @@ fn ssh_key(dir: &Path, name: &str) -> (String, String) {
     (path.display().to_string(), public.trim().to_string())
 }
 
-/// Makes an empty commit approving `kinds`, signed with `key`.
+/// The content an approval of HEAD names: git's digest of every file but
+/// signatures, as `stemma` computes it.
+fn content_id(dir: &Path) -> String {
+    let listing = git(dir, &["ls-tree", "-r", "--full-tree", "HEAD"]);
+    let content: String = listing
+        .lines()
+        .filter(|l| !l.split_once('\t').unwrap().1.starts_with("signatures/"))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    let mut child = Command::new("git")
+        .args(["hash-object", "--stdin"])
+        .current_dir(dir)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    use std::io::Write;
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(content.as_bytes())
+        .unwrap();
+    String::from_utf8_lossy(&child.wait_with_output().unwrap().stdout)
+        .trim()
+        .to_string()
+}
+
+/// Makes an empty commit approving `kinds` of HEAD's content, signed with `key`.
 fn approve(dir: &Path, key: &str, kinds: &str) {
+    let content = content_id(dir);
     git(
         dir,
         &[
@@ -303,7 +332,7 @@ fn approve(dir: &Path, key: &str, kinds: &str) {
             "-m",
             "Approve the change",
             "-m",
-            &format!("Approve: {kinds}"),
+            &format!("Approve: {kinds}\nApprove-content: {content}"),
         ],
     );
 }

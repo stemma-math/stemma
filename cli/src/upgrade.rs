@@ -10,6 +10,7 @@ use std::process::{Command, Stdio};
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use serde_json::json;
+use toml_edit::{Array, DocumentMut, Item, value};
 
 use crate::commands::{LEAN_TOOLCHAIN, STEMMA_GIT, mathlib_rev};
 use crate::config::Config;
@@ -31,9 +32,10 @@ pub fn this_version() -> Version {
     parse_version(env!("CARGO_PKG_VERSION")).expect("the crate's version is major.minor.patch")
 }
 
-/// The files of a library a migration works on, in memory.
+/// The files of a library a migration works on, in memory. `stemma.toml` is
+/// edited through its structure, never through its text.
 struct Files {
-    config: String,
+    config: DocumentMut,
     agents: Option<String>,
 }
 
@@ -45,44 +47,39 @@ struct Migration {
     apply: fn(&mut Files, title: &str),
 }
 
-/// `text` without the lines that set `key`.
-fn without_key(text: &str, key: &str) -> String {
-    text.lines()
-        .filter(|line| {
-            !line
-                .trim_start()
-                .strip_prefix(key)
-                .is_some_and(|rest| rest.trim_start().starts_with('='))
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-        + "\n"
+/// Renames `table.from` to `table.to`, keeping its value.
+fn rename_key(doc: &mut DocumentMut, table: &str, from: &str, to: &str) {
+    if let Some(t) = doc.get_mut(table).and_then(Item::as_table_like_mut)
+        && let Some(v) = t.remove(from)
+    {
+        t.insert(to, v);
+    }
 }
 
-/// `text` with `key` added to the member `name`'s keys, when that member has
-/// none. Members are written one per line, as `stemma init` writes them.
-pub fn with_member_key(text: &str, name: &str, key: &str) -> String {
-    let quoted = format!("\"{name}\"");
-    text.lines()
-        .map(|line| {
-            let trimmed = line.trim_start();
-            let is_member = [name, quoted.as_str()].iter().any(|n| {
-                trimmed
-                    .strip_prefix(n)
-                    .is_some_and(|rest| rest.trim_start().starts_with('='))
-            });
-            match line.rfind('}') {
-                Some(end) if is_member && !line.contains("keys") => format!(
-                    "{}, keys = [\"{key}\"] {}",
-                    line[..end].trim_end(),
-                    &line[end..]
-                ),
-                _ => line.to_string(),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-        + "\n"
+/// Removes `table.key`, and the table when nothing is left in it.
+fn remove_key(doc: &mut DocumentMut, table: &str, key: &str) {
+    let Some(t) = doc.get_mut(table).and_then(Item::as_table_like_mut) else {
+        return;
+    };
+    t.remove(key);
+    if t.is_empty() {
+        doc.remove(table);
+    }
+}
+
+/// Gives the member `name` the key `key`, when that member has no keys.
+pub fn add_member_key(doc: &mut DocumentMut, name: &str, key: &str) {
+    let Some(member) = doc
+        .get_mut("members")
+        .and_then(Item::as_table_like_mut)
+        .and_then(|m| m.get_mut(name))
+        .and_then(Item::as_table_like_mut)
+    else {
+        return;
+    };
+    if member.get("keys").is_none() {
+        member.insert("keys", value(Array::from_iter([key])));
+    }
 }
 
 /// Every migration, oldest first.
@@ -91,18 +88,12 @@ const MIGRATIONS: &[Migration] = &[
         version: (0, 2, 0),
         description: "`self_merge` is now `merge_without_approval`",
         apply: |files, _| {
-            files.config = files
-                .config
-                .lines()
-                .map(|line| match line.trim_start().strip_prefix("self_merge") {
-                    Some(rest) if rest.trim_start().starts_with('=') => {
-                        line.replacen("self_merge", "merge_without_approval", 1)
-                    }
-                    _ => line.to_string(),
-                })
-                .collect::<Vec<_>>()
-                .join("\n")
-                + "\n";
+            rename_key(
+                &mut files.config,
+                "policy",
+                "self_merge",
+                "merge_without_approval",
+            )
         },
     },
     Migration {
@@ -131,8 +122,8 @@ const MIGRATIONS: &[Migration] = &[
             `merge_without_approval` and `distinct_from_author` are gone, and members \
             need `keys`",
         apply: |files, _| {
-            files.config = without_key(&files.config, "merge_without_approval");
-            files.config = without_key(&files.config, "distinct_from_author");
+            remove_key(&mut files.config, "policy", "merge_without_approval");
+            remove_key(&mut files.config, "signatures", "distinct_from_author");
         },
     },
 ];
@@ -177,7 +168,10 @@ fn plan(library: &Library) -> Result<Plan> {
     }
     let read = |file: &str| std::fs::read_to_string(dir.join(file)).ok();
     let mut files = Files {
-        config: read("stemma.toml").context("reading stemma.toml")?,
+        config: read("stemma.toml")
+            .context("reading stemma.toml")?
+            .parse::<DocumentMut>()
+            .context("reading stemma.toml")?,
         agents: read("AGENTS.md"),
     };
     let mut migrations = Vec::new();
@@ -191,23 +185,12 @@ fn plan(library: &Library) -> Result<Plan> {
     // The person upgrading signs with their key: when their member has none,
     // it is added, so that they can sign and approve with this version.
     if let Some(key) = crate::keys::signing_key(dir)
-        && Config::parse(&files.config).is_ok_and(|c| c.member_with_key(&key).is_none())
+        && Config::parse(&files.config.to_string()).is_ok_and(|c| c.member_with_key(&key).is_none())
     {
-        files.config = with_member_key(&files.config, &crate::agent::person(), &key);
+        add_member_key(&mut files.config, &crate::agent::person(), &key);
     }
     // The version the library uses.
-    files.config = files
-        .config
-        .lines()
-        .map(|line| match line.trim_start().strip_prefix("stemma") {
-            Some(rest) if rest.trim_start().starts_with('=') => {
-                format!("stemma = \"{}\"", env!("CARGO_PKG_VERSION"))
-            }
-            _ => line.to_string(),
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-        + "\n";
+    files.config["library"]["stemma"] = value(env!("CARGO_PKG_VERSION"));
     // The files only `stemma` writes, from this version's templates.
     let lakefile: Lakefile =
         toml::from_str(&read("lakefile.toml").context("reading lakefile.toml")?)
@@ -232,7 +215,7 @@ fn plan(library: &Library) -> Result<Plan> {
         .or(files.agents.clone())
         .unwrap_or_else(|| agents_md::initial(&config.title));
     let writes = vec![
-        ("stemma.toml".to_string(), files.config),
+        ("stemma.toml".to_string(), files.config.to_string()),
         (
             "lakefile.toml".to_string(),
             templates::render("library/lakefile.toml", &context)?,
@@ -386,26 +369,52 @@ mod tests {
         assert!(parse_version("0.10.0") > parse_version("0.9.9"));
     }
 
-    #[test]
-    fn adds_a_key_to_a_member_without_one() {
-        let text = "[members]\nalice = { roles = [\"maintainer\"] }\nbob = { roles = [] }\n";
-        let new = with_member_key(text, "alice", "ssh-ed25519 AAAA");
-        assert!(
-            new.contains("alice = { roles = [\"maintainer\"], keys = [\"ssh-ed25519 AAAA\"] }")
-        );
-        assert!(new.contains("bob = { roles = [] }"));
+    fn doc(text: &str) -> DocumentMut {
+        text.parse().unwrap()
     }
 
     #[test]
-    fn renames_self_merge() {
+    fn adds_a_key_to_a_member_without_one() {
+        let mut d = doc("[members]\nalice = { roles = [\"maintainer\"] }\nbob = { roles = [] }\n");
+        add_member_key(&mut d, "alice", "ssh-ed25519 AAAA");
+        add_member_key(&mut d, "carol", "ssh-ed25519 CCCC");
+        let c: toml::Value = toml::from_str(&d.to_string()).unwrap();
+        assert_eq!(
+            c["members"]["alice"]["keys"][0].as_str(),
+            Some("ssh-ed25519 AAAA")
+        );
+        assert!(c["members"]["bob"].get("keys").is_none());
+        assert!(c["members"].get("carol").is_none());
+    }
+
+    #[test]
+    fn a_key_in_another_table_is_left_alone() {
+        // A member named like a key of [library] is a member, not that key.
+        let mut d = doc("[library]\nstemma = \"0.1.0\"\n\n[members]\nstemma = { roles = [] }\n");
+        d["library"]["stemma"] = value("0.3.0");
+        let c: toml::Value = toml::from_str(&d.to_string()).unwrap();
+        assert_eq!(c["library"]["stemma"].as_str(), Some("0.3.0"));
+        assert!(c["members"]["stemma"].is_table());
+    }
+
+    #[test]
+    fn renames_and_removes_policy_keys() {
         let mut files = Files {
-            config: "[policy]\nself_merge = [\"signer\"]\nother = 1\n".into(),
+            config: doc(
+                "[policy]\nself_merge = [\"signer\"]\nother = 1\n\n[signatures]\ndistinct_from_author = true\n",
+            ),
             agents: None,
         };
         (MIGRATIONS[0].apply)(&mut files, "T");
+        let c: toml::Value = toml::from_str(&files.config.to_string()).unwrap();
         assert_eq!(
-            files.config,
-            "[policy]\nmerge_without_approval = [\"signer\"]\nother = 1\n"
+            c["policy"]["merge_without_approval"][0].as_str(),
+            Some("signer")
         );
+        (MIGRATIONS[2].apply)(&mut files, "T");
+        let c: toml::Value = toml::from_str(&files.config.to_string()).unwrap();
+        assert!(c["policy"].get("merge_without_approval").is_none());
+        assert_eq!(c["policy"]["other"].as_integer(), Some(1));
+        assert!(c.get("signatures").is_none());
     }
 }

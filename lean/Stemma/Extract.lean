@@ -53,6 +53,8 @@ structure Diagnostic where
 structure Report where
   version : Nat := 1
   library : Name
+  /-- Whether the root module is a document, the library's front page. -/
+  rootDocument : Bool
   modules : Array ModuleReport
   environments : Array EnvReport
   diagnostics : Array Diagnostic
@@ -149,6 +151,8 @@ def extract (root : Name) : MetaM Report := do
   let environments ← records.mapM (envReport env root cache)
   let diagnostics :=
     tocDiagnostics env root ++ labelDiagnostics records ++ (← axiomDiagnostics env root records)
-  return { library := root, modules, environments, diagnostics }
+  return {
+    library := root, rootDocument := env.contains (documentConstant root),
+    modules, environments, diagnostics }
 
 end Stemma

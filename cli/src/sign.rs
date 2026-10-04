@@ -208,6 +208,19 @@ pub fn sign(labels: Vec<String>, base: String, commit: bool) -> Result<bool> {
             .or_default()
             .push(env);
     }
+    // Signatures that apply to no central environment any more.
+    let to_withdraw: Vec<String> = if is_signer {
+        verdict
+            .missing
+            .iter()
+            .filter_map(|m| match m {
+                crate::verify::Missing::Withdrawal { label } => Some(label.clone()),
+                _ => None,
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     // Changes to approve.
     let to_approve: Vec<String> = verdict
         .missing
@@ -225,7 +238,7 @@ pub fn sign(labels: Vec<String>, base: String, commit: bool) -> Result<bool> {
             unformalized.join(", ")
         ))?;
     }
-    if groups.is_empty() && to_approve.is_empty() {
+    if groups.is_empty() && to_approve.is_empty() && to_withdraw.is_empty() {
         cliclack::outro(format!(
             "Nothing awaits your signature or approval, {member}."
         ))?;
@@ -271,12 +284,41 @@ pub fn sign(labels: Vec<String>, base: String, commit: bool) -> Result<bool> {
             written.push(label.to_string());
         }
     }
+    let mut withdrawn = Vec::new();
+    if !to_withdraw.is_empty() {
+        cliclack::log::step(crate::ui::bold(format!(
+            "Signatures that apply to no central environment ({})",
+            to_withdraw.len()
+        )))?;
+        cliclack::note(
+            "Removed, made not central, or relabelled",
+            to_withdraw.join("\n"),
+        )?;
+        if cliclack::confirm(format!(
+            "Withdraw these {}? The library no longer claims what they signed.",
+            to_withdraw.len()
+        ))
+        .initial_value(false)
+        .interact()?
+        {
+            withdrawn = to_withdraw;
+        }
+    }
     let mut approved = Vec::new();
     if !to_approve.is_empty() {
         cliclack::log::step(crate::ui::bold(format!(
             "Changes to approve: {}",
             to_approve.join(", ")
         )))?;
+        let dirty = Command::new("git")
+            .args(["status", "--porcelain", "--", ".", ":!signatures"])
+            .current_dir(&library.dir)
+            .output()?;
+        if !dirty.stdout.is_empty() {
+            cliclack::log::warning(
+                "There are uncommitted changes: they are not part of what you approve.",
+            )?;
+        }
         let stat = Command::new("git")
             .args(["diff", "--stat", &format!("{base}...HEAD")])
             .current_dir(&library.dir)
@@ -295,7 +337,7 @@ pub fn sign(labels: Vec<String>, base: String, commit: bool) -> Result<bool> {
             approved = to_approve;
         }
     }
-    if written.is_empty() && approved.is_empty() {
+    if written.is_empty() && approved.is_empty() && withdrawn.is_empty() {
         cliclack::outro("Nothing was signed or approved.")?;
         return Ok(true);
     }
@@ -310,25 +352,39 @@ pub fn sign(labels: Vec<String>, base: String, commit: bool) -> Result<bool> {
     }
     let files: Vec<String> = written
         .iter()
+        .chain(&withdrawn)
         .map(|l| format!("signatures/{l}.toml"))
         .collect();
+    for l in &withdrawn {
+        std::fs::remove_file(library.dir.join("signatures").join(format!("{l}.toml")))?;
+    }
     let mut subject = Vec::new();
     if !written.is_empty() {
         subject.push(format!("Sign {}", written.join(", ")));
     }
+    if !withdrawn.is_empty() {
+        subject.push(format!("withdraw {}", withdrawn.join(", ")));
+    }
     if !approved.is_empty() {
         subject.push(format!("approve the change ({})", approved.join(", ")));
     }
-    let mut message = subject.join("; ");
+    let mut summary = subject.join("; ");
+    if let Some(first) = summary.get(..1) {
+        summary = first.to_uppercase() + &summary[1..];
+    }
+    let mut message = summary.clone();
     if !approved.is_empty() {
+        // The approval names the content it approves: the committed content of
+        // the branch, which the signatures in this commit do not change.
+        let content = crate::verify::content_id(&library.dir, "HEAD")?;
         message.push_str(&format!(
-            "\n\nApprove: {}\nApproved-by: {member}",
+            "\n\nApprove: {}\nApprove-content: {content}\nApproved-by: {member}",
             approved.join(", ")
         ));
     }
     if !files.is_empty() {
         let added = Command::new("git")
-            .arg("add")
+            .args(["add", "--all", "--"])
             .args(&files)
             .current_dir(&library.dir)
             .status()?;
@@ -345,10 +401,7 @@ pub fn sign(labels: Vec<String>, base: String, commit: bool) -> Result<bool> {
     }
     let committed = git_commit.status().context("running `git commit`")?;
     anyhow::ensure!(committed.success(), "committing failed");
-    cliclack::outro(format!(
-        "{}. Committed, signed with your key.",
-        subject.join("; ")
-    ))?;
+    cliclack::outro(format!("{summary}. Committed, signed with your key."))?;
     Ok(true)
 }
 

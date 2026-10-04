@@ -77,9 +77,14 @@ impl Config {
     }
 
     /// The roles whose approval a kind of change needs. A change to the
-    /// policy always needs a maintainer's.
+    /// policy always needs a maintainer's; a change of dependencies needs one
+    /// too unless the group says otherwise (`dependencies = []`).
     pub fn review_roles(&self, kind: &str) -> Option<Vec<String>> {
         let configured = self.policy.review.get(kind).cloned();
+        if kind == "dependencies" {
+            let roles = configured.unwrap_or_else(|| vec!["maintainer".into()]);
+            return (!roles.is_empty()).then_some(roles);
+        }
         if kind == "policy" {
             let mut roles = configured.unwrap_or_default();
             if !roles.iter().any(|r| r == "maintainer") {
@@ -106,7 +111,7 @@ alice = { roles = ["maintainer", "signer"], keys = ["ssh-ed25519 AAAAalice alice
 bob = { roles = ["signer"] }
 
 [policy.review]
-new-central = ["signer"]
+policy = ["signer"]
 "#;
 
     #[test]
@@ -114,9 +119,10 @@ new-central = ["signer"]
         let c = Config::parse(CONFIG).unwrap();
         assert!(c.has_role("alice", &["maintainer".into()]));
         assert!(!c.has_role("bob", &["maintainer".into()]));
-        assert_eq!(c.review_roles("new-central").unwrap(), ["signer"]);
-        assert_eq!(c.review_roles("policy").unwrap(), ["maintainer"]);
-        assert!(c.review_roles("dependencies").is_none());
+        assert_eq!(c.review_roles("policy").unwrap(), ["signer", "maintainer"]);
+        assert_eq!(c.review_roles("dependencies").unwrap(), ["maintainer"]);
+        let opted_out = Config::parse(&format!("{CONFIG}dependencies = []\n")).unwrap();
+        assert!(opted_out.review_roles("dependencies").is_none());
     }
 
     #[test]

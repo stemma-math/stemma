@@ -63,6 +63,9 @@ Who writes each entry:
 
 - `<Library>.lean` imports every module of the library, each exactly once.
   `stemma check` fails when a module is missing.
+- It has a fixed form, so that `stemma` reads it exactly as Lean does: it
+  begins with its imports, one `import <Module>` per line (blank lines between
+  them are allowed), and nothing else comes before its first command.
 - The order of its imports is the order in which the site presents the
   modules. Lean ignores that order, so it is free for the reader. Nesting
   comes from module names: siblings appear in the order in which the first of
@@ -335,6 +338,10 @@ changes need a signature:
 - making a signed environment not central;
 - changing a signed environment's label or its `cited` mark.
 
+A signature that applies to no central environment any more (because the
+environment was removed, made not central, or relabelled) must be withdrawn by
+a signer, with `stemma sign`, in the same change.
+
 Everything else goes in without one: new central environments (unsigned
 until someone signs them), proofs of signed statements, dark work outside
 every signed closure, prose outside environments, and environments that are
@@ -480,22 +487,28 @@ decides which, in `stemma.toml`:
 
 ```toml
 [policy.review]
-new-central  = ["signer"]       # a new central environment
-dependencies = ["maintainer"]   # new versions of Lean, Verso or Mathlib
-policy       = ["maintainer"]   # stemma.toml or .github/
+dependencies = ["maintainer"]   # lakefile.toml, lake-manifest.json, lean-toolchain
+policy       = ["maintainer"]   # stemma.toml, .github/
 ```
 
-- `policy.review` names kinds of change, computed from the content of the
-  change, and the roles whose approval they need. A change of the `policy`
-  kind (the members, their keys and roles, the policy, the version of
-  `stemma`, the forge's checks) always needs a maintainer's approval, and that
-  cannot be turned off.
+- `policy.review` names kinds of change and the roles whose approval they
+  need. A change's kinds come from the files it touches, exactly; there is no
+  other way a change gets a kind.
+- A change of the `policy` kind (the members, their keys and roles, the
+  policy, the version of `stemma`, the forge's checks) always needs a
+  maintainer's approval, and that cannot be turned off.
+- A change of the `dependencies` kind needs a maintainer's approval unless the
+  group says otherwise (`dependencies = []`): a new dependency is code that
+  every member's machine will build and run.
 - **An approval is a signed commit**, not a forge's review. `stemma sign`
   records it: an empty commit, or the commit of the signatures made at the
   same time, signed with the member's key, with a trailer naming the kinds it
   approves (`Approve: policy, dependencies`).
-- **An approval approves the content as it stands.** A later change of
-  content (anything but signatures) withdraws it; it is then given again.
+- **An approval names the content it approves**: a digest, made by git, of
+  every file of the branch but signatures (`Approve-content:`). It counts only
+  while that is the branch's content; any other change of content (a new
+  commit, bringing in `main`, a rebase) leaves it behind, and it is given
+  again.
 - Any member with one of the roles may approve, including the one who made
   the change: an approval guarantees that a person looked at it.
 - **The members and the policy are always read from `main`, never from the

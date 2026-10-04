@@ -10,6 +10,9 @@ use serde::{Deserialize, Serialize};
 pub struct Report {
     pub version: u32,
     pub library: String,
+    /// Whether the root module is a document, the library's front page.
+    #[serde(rename = "rootDocument")]
+    pub root_document: bool,
     pub modules: Vec<Module>,
     pub environments: Vec<Environment>,
     pub diagnostics: Vec<Diagnostic>,
@@ -71,9 +74,12 @@ pub enum Signature {
     Stale,
 }
 
-/// The parts of a signature file Stemma compares.
+/// The parts of a signature file Stemma compares: what a signature covers
+/// besides the fingerprints is the environment's kind and `cited` mark.
 #[derive(Debug, Deserialize)]
 struct SignatureFile {
+    kind: String,
+    cited: Option<String>,
     fingerprints: Fingerprints,
 }
 
@@ -95,7 +101,13 @@ impl Environment {
         };
         let signed = toml::from_str::<SignatureFile>(&text).ok();
         Some(match (signed, &self.fingerprints) {
-            (Some(s), Some(current)) if &s.fingerprints == current => Signature::Signed,
+            (Some(s), Some(current))
+                if &s.fingerprints == current
+                    && s.kind == self.record.base
+                    && s.cited == self.record.cited =>
+            {
+                Signature::Signed
+            }
             _ => Signature::Stale,
         })
     }

@@ -2,7 +2,10 @@
 # The report `stemma-extract` gives of the test library contains what it must.
 set -uo pipefail
 cd "$(dirname "$0")/.."
-report=$(lake exe stemma-extract StemmaTest) || { echo "FAIL stemma-extract exited with an error"; exit 1; }
+out=$(mktemp)
+trap 'rm -f "$out"' EXIT
+lake exe stemma-extract StemmaTest "$out" > /dev/null || { echo "FAIL stemma-extract exited with an error"; exit 1; }
+report=$(cat "$out")
 status=0
 while IFS= read -r expected; do
   if grep -qF -- "$expected" <<<"$report"; then
@@ -15,6 +18,7 @@ done <<'EXPECTED'
 {"kind":"lean","name":"StemmaTest.Machinery"}
 "label":"even-add"
 "state":"cited"
+"rootDocument":false
 "state":"notFormalized"
 "formal":"sha256:
 The module StemmaTest.Machinery is missing from the table of contents
