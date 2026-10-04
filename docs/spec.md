@@ -165,28 +165,98 @@ is the unit of the mathematical text, and the unit of state and signature.
 
 - **The Lean inside an environment is its formalization.** Stemma records,
   for each environment, the declarations its ` ```lean ` blocks add. The
-  relation between a statement and its formalization is computed by the
+  relation between the text and its formalization is computed by the
   elaborator, not written by hand.
 - **An environment without Lean is not formalized yet**, and is shown as such.
 - **Lean outside every environment is dark work**: part of the library, but
   not part of the mathematical text, and never signed.
-- **Environments carry required marks**, among them whether they are central.
-  A missing mark is a compilation error.
-- Each environment has a **base kind**, which decides how Stemma treats it,
-  and a **name** shown to readers. Groups can register their own names on top
-  of the base kinds.
+
+#### Base kinds
+
+Every environment has a base kind, which decides how Stemma treats it:
+
+| Base kind | What it is | Its Lean | What a signature covers |
+|---|---|---|---|
+| `definition` | Introduces a concept or a construction | `def`, `structure`, `class`, `instance`, … | The prose, and the types and values of its declarations with proofs erased, with their closure |
+| `statement` | Claims something | `theorem` (`axiom` only when cited) | The prose, and the types of its declarations, with their closure |
+| `proof` | The informal proof of a definition or a statement | Optional: auxiliary lemmas, which are dark work | Never signed |
+| `remark` | A remark, an example, a note | Optional (an `example`, say) | Never signed, never central |
+
+- The formal proof of a statement is the body of its `theorem`: in Lean, a
+  statement and its proof are one declaration. A `proof` environment holds the
+  informal proof.
+- The **closure** of a declaration is everything its meaning depends on: the
+  definitions its type (and, for a definition, its value) uses, transitively.
+  Proofs are not part of it: by proof irrelevance, a different proof cannot
+  change what is defined or established.
+
+#### Names
+
+Each environment has a name shown to readers, which maps to a base kind.
+Stemma ships these:
+
+| Name | Base kind |
+|---|---|
+| Definition, Construction | `definition` |
+| Theorem, Lemma, Proposition, Corollary, Conjecture | `statement` |
+| Proof | `proof` |
+| Remark, Example, Note | `remark` |
+
+A group registers its own names with a Lean command, in a module imported
+before they are used (for example, a `hypothesis` named "Hypothesis" on top of
+`statement`).
+
+#### Marks
+
+| Mark | On | Required | Meaning |
+|---|---|---|---|
+| `label` | `definition`, `statement` | yes | A stable identifier, unique in the library, that readings, papers and signatures cite. It cannot change once signed. |
+| `label` | `proof`, `remark` | no | The same, when something needs to cite them. |
+| `central` | `definition`, `statement` | yes, `true` or `false` | Whether the environment is central: signed and audited (§ signatures). |
+| `of` | `proof` | yes | The label of the definition or statement it proves, which must already exist, in the same module or an imported one. |
+| `title` | any | no | A name shown with the environment: "Theorem 3.2 (Zorn's lemma)". |
+| `cited` | `definition`, `statement` | no | A reference in `references.bib`: the environment's obligations are accepted from the literature instead of proved. |
+
+Dependencies ("this uses that definition") are not marks: they are computed
+from the Lean.
+
+#### Obligations and states
+
+- The **obligations** of an environment are the proofs its formalization
+  needs: for a statement, the proofs of its theorems; for a definition, the
+  proof parts of its values (a construction must show that it has the
+  structure it promises; a plain definition has no obligations). Lean tells
+  them apart, so they are computed, never marked.
+- The state of a definition or a statement is computed:
+  - **not formalized**: it has no Lean;
+  - **pending**: some obligation depends on `sorry`;
+  - **cited**: some obligation rests on axioms allowed by `cited`;
+  - **proved**: none of the above.
+
+#### Rules
+
+The elaborator enforces these; breaking one is a compilation error.
+
+- An environment's kind and required marks are known and present.
+- Labels are unique in the library.
+- **Data never depends on `sorry` or on axioms.** `sorry` is allowed only in
+  obligations: a `sorry` in the data would change what is defined.
+- **An `axiom` is allowed only inside a `cited` environment, and only for a
+  proposition**: an obligation accepted from the literature, never an object.
+  So the axioms a result depends on say exactly which literature it rests on.
+- A `proof` names, with `of`, an existing definition or statement.
 
 ## Open questions
 
-1. **Environments.** The base kinds, the names Stemma ships, the required
-   marks, and how a proof is attached to its statement.
-2. **Signatures.** One file per signed result avoids merge conflicts; one lock
+1. **Signatures.** One file per signed result avoids merge conflicts; one lock
    file is easier to read. How a signature is made, and by whom, is part of
    the signature protocol (to be written).
-3. **Private work.** Whether a person can keep modules private within the
+2. **Private work.** Whether a person can keep modules private within the
    group, and where they live.
-4. **Readings** (`readings/`). Their format, how they cite the
+3. **Readings** (`readings/`). Their format, how they cite the
    library, and whether a paper lives in the library repository or in its
    own, citing a release of the library.
-5. **`stemma.toml`.** What it holds: the library's title, the pinned `stemma`
+4. **`stemma.toml`.** What it holds: the library's title, the pinned `stemma`
    version, the group's members and who can sign.
+5. **References across libraries.** How a document cites an environment of
+   another Stemma library it depends on.
