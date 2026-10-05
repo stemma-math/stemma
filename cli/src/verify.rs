@@ -164,11 +164,31 @@ fn trailer(dir: &Path, sha: &str, key: &str) -> Result<String> {
     )
 }
 
-/// The files a commit changes, against its first parent (for a merge, what it
-/// brings in).
+/// The files a commit itself changes. For an ordinary commit, against its
+/// parent. For a merge, only what differs from every parent (git's combined
+/// diff): a merge that only combines its parents changes nothing, whichever
+/// side the changes came from, and one that resolves a conflict changes what
+/// it resolved.
 fn files_of(dir: &Path, sha: &str) -> Result<Vec<String>> {
-    let parent = format!("{sha}^");
-    let text = git(dir, &["diff", "--name-only", &parent, sha])?;
+    let parents = git(dir, &["rev-list", "--parents", "-n", "1", sha])?
+        .split_whitespace()
+        .count()
+        .saturating_sub(1);
+    let text = if parents > 1 {
+        git(
+            dir,
+            &[
+                "diff-tree",
+                "-r",
+                "--cc",
+                "--name-only",
+                "--no-commit-id",
+                sha,
+            ],
+        )?
+    } else {
+        git(dir, &["diff", "--name-only", &format!("{sha}^"), sha])?
+    };
     Ok(text.lines().map(str::to_string).collect())
 }
 

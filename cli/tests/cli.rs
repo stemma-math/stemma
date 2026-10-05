@@ -414,3 +414,92 @@ fn approvals_are_signed_commits_checked_against_members_keys() {
         "{v}"
     );
 }
+
+/// Commits `files` as they are in the working tree, signed with `key`.
+fn signed_commit(dir: &Path, key: &str, message: &str, files: &[&str]) {
+    let mut add = vec!["add", "--"];
+    add.extend(files);
+    git(dir, &add);
+    git(
+        dir,
+        &[
+            "-c",
+            "gpg.format=ssh",
+            "-c",
+            &format!("user.signingkey={key}"),
+            "commit",
+            "--quiet",
+            "-S",
+            "-m",
+            message,
+        ],
+    );
+}
+
+#[test]
+fn merges_that_only_combine_their_parents_change_nothing() {
+    let dir = scratch("merges");
+    let keys = scratch("merges-keys");
+    let (alice, alice_public) = ssh_key(&keys, "alice");
+    let out = stemma(
+        &dir,
+        &["init", ".", "--name", "Alg", "--no-mathlib", "--commit"],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let config = read(dir.join("stemma.toml"));
+    let library = &config[..config.find("[members]").unwrap()];
+    std::fs::write(
+        dir.join("stemma.toml"),
+        format!(
+            "{library}[members]\nalice = {{ roles = [\"signer\"], keys = [\"{alice_public}\"] }}\n"
+        ),
+    )
+    .unwrap();
+    git(&dir, &["commit", "--quiet", "-am", "Alice signs"]);
+
+    // On a branch: some work, then a signature in a commit of its own.
+    git(&dir, &["switch", "--quiet", "--create", "work"]);
+    std::fs::write(dir.join("README.md"), "work\n").unwrap();
+    git(&dir, &["commit", "--quiet", "-am", "Work"]);
+    std::fs::create_dir_all(dir.join("signatures")).unwrap();
+    std::fs::write(dir.join("signatures/one.toml"), "signer = \"alice\"\n").unwrap();
+    signed_commit(&dir, &alice, "Sign one", &["signatures/one.toml"]);
+
+    // Meanwhile main moves on, and the branch brings it in, as sharing does.
+    git(&dir, &["switch", "--quiet", "main"]);
+    std::fs::write(dir.join("notes.txt"), "main\n").unwrap();
+    git(&dir, &["add", "notes.txt"]);
+    git(&dir, &["commit", "--quiet", "-m", "Elsewhere"]);
+    git(&dir, &["switch", "--quiet", "work"]);
+    git(&dir, &["merge", "--quiet", "--no-edit", "main"]);
+    let v = verify(&dir);
+    assert_eq!(v["ok"], true, "{v}");
+
+    // A forge checks a merge of main with the branch, made in its own name.
+    git(&dir, &["switch", "--quiet", "--detach", "main"]);
+    git(&dir, &["merge", "--quiet", "--no-ff", "--no-edit", "work"]);
+    let v = verify(&dir);
+    assert_eq!(v["ok"], true, "{v}");
+
+    // A commit that changes signatures and anything else still fails.
+    git(&dir, &["switch", "--quiet", "work"]);
+    std::fs::write(dir.join("README.md"), "more work\n").unwrap();
+    std::fs::write(dir.join("signatures/two.toml"), "signer = \"alice\"\n").unwrap();
+    signed_commit(
+        &dir,
+        &alice,
+        "Work and sign",
+        &["README.md", "signatures/two.toml"],
+    );
+    let v = verify(&dir);
+    assert!(
+        v["failures"]
+            .to_string()
+            .contains("signatures go in commits of their own"),
+        "{v}"
+    );
+}
