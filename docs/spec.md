@@ -375,7 +375,10 @@ but to make sure that neither an agent's shortcut nor a person's offhand
   3. `stemma verify` accepts a change to `signatures/` only in commits that
      touch nothing else and are signed with the key of a member with the
      `signer` role, as listed in `stemma.toml` on `main`. Git checks the
-     signature; no forge is involved.
+     signature; no forge is involved. A merge changes only what differs from
+     every one of its parents: one that only combines them (bringing `main`
+     into a branch, or a forge's merge of a pull request) changes nothing,
+     and one that resolves a conflict changes what it resolves.
 - Agents prepare signatures but never make them: when a change needs
   signatures, the agent tells the person which ones, and why.
 
@@ -508,7 +511,9 @@ policy       = ["maintainer"]   # stemma.toml, .github/
   every file of the branch but signatures (`Approve-content:`). It counts only
   while that is the branch's content; any other change of content (a new
   commit, bringing in `main`, a rebase) leaves it behind, and it is given
-  again.
+  again. The checks of a pull request look at `main` with the change applied:
+  an approval counts there when the branch already includes what `main` has,
+  which sharing ensures.
 - Any member with one of the roles may approve, including the one who made
   the change: an approval guarantees that a person looked at it.
 - **The members and the policy are always read from `main`, never from the
