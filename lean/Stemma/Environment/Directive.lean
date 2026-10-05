@@ -136,6 +136,19 @@ def isUserDecl (env : Environment) (n : Name) : Bool :=
   !n.isInternal && !generatedKind && !isAuxRecursor env n && !isNoConfusion env n &&
     !isMatcherCore env n && !(env.isProjectionFn n)
 
+/-- Recover the source span of composite blocks, including lists whose wrapper
+has no source information of its own. -/
+private partial def sourceBounds (stx : Syntax) : Option (String.Pos.Raw × String.Pos.Raw) := Id.run do
+  let mut bounds := stx.getPos?.bind fun s => stx.getTailPos?.map fun e => (s, e)
+  for child in stx.getArgs do
+    if let some (s, e) := sourceBounds child then
+      bounds := some <| match bounds with
+        | none => (s, e)
+        | some (lo, hi) =>
+          (if s.byteIdx < lo.byteIdx then s else lo,
+           if hi.byteIdx < e.byteIdx then e else hi)
+  return bounds
+
 /--
 The source of an environment's blocks: those of Lean code when `lean` is true,
 and the others, its prose, when it is false.
@@ -145,7 +158,7 @@ def sourceOf (contents : TSyntaxArray `block) (lean : Bool) : DocElabM String :=
   let mut parts := #[]
   for b in contents do
     if (b.raw.getKind == ``Lean.Doc.Syntax.codeblock) != lean then continue
-    if let (some s, some e) := (b.raw.getPos?, b.raw.getTailPos?) then
+    if let some (s, e) := sourceBounds b.raw then
       parts := parts.push (String.Pos.Raw.extract text.source s e).trimAscii.toString
   return "\n\n".intercalate parts.toList
 

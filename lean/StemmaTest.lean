@@ -5,3 +5,5 @@ import StemmaTest.Duplicate.A
 import StemmaTest.Duplicate.B
 import StemmaTest.Status
 import StemmaTest.Fingerprints
+
+import StemmaTest.Prose

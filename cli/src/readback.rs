@@ -70,18 +70,23 @@ fn formal_side(report: &Report, env: &Environment) -> String {
 }
 
 /// The request a fresh agent session answers.
-fn prompt(formal: &str) -> String {
+fn prompt(formal: &str, declarations: &[String]) -> String {
+    let targets = declarations.join("\n");
     format!(
         "You are auditing a formalization. Below is Lean 4 code (with Mathlib \
-conventions). Read only the code and translate the LAST declaration's statement \
-(for a definition: what it defines) into precise mathematical prose, as a \
+conventions). Read only the code and translate EVERY declaration listed in \
+Target declarations below (for a definition: what it defines) into precise \
+mathematical prose, as a \
 mathematician would state it in a paper. Do not guess intent from names: say \
 exactly what the Lean says, including hypotheses, quantifiers and types. Then, \
 under a heading \"Notes\", point out anything that makes the statement differ \
 from what a reader might expect: Mathlib conventions (truncated subtraction on \
 natural numbers, division by zero, junk values), missing or unusual hypotheses, \
 or vacuous cases. Write \"Notes: none\" if there is nothing. Answer with the \
-prose and the notes only.\n\n{formal}\n"
+prose and the notes only. Cover each target, including structures, definitions, \
+and instances; do not restrict the read-back to the last declaration. Other \
+declarations are dependency context, not additional targets.\n\nTarget declarations:\n\
+{targets}\n\nLean code:\n{formal}\n"
     )
 }
 
@@ -225,7 +230,7 @@ pub fn readback(options: Options, json_output: bool) -> Result<bool> {
         let text = translate(
             options.translator,
             options.model.as_deref(),
-            &prompt(&formal_side(&report, env)),
+            &prompt(&formal_side(&report, env), &env.record.decls),
         );
         spinner.stop();
         let text = text?;
@@ -251,11 +256,18 @@ pub fn readback(options: Options, json_output: bool) -> Result<bool> {
         let (Some(label), Some(fp)) = (&env.record.label, &env.fingerprints) else {
             continue;
         };
-        if let Some(r) = std::fs::read_to_string(dir.join(format!("{label}.json")))
+        if let Some(mut r) = std::fs::read_to_string(dir.join(format!("{label}.json")))
             .ok()
             .and_then(|t| serde_json::from_str::<Readback>(&t).ok())
             .filter(|r| r.formal == fp.formal)
         {
+            // Prose can change without invalidating a blind formal translation.
+            r.prose = env.record.prose.clone();
+            r.lean = env.record.lean.clone();
+            std::fs::write(
+                dir.join(format!("{label}.json")),
+                serde_json::to_string_pretty(&r)?,
+            )?;
             all.push(r);
         }
     }
@@ -294,6 +306,18 @@ pub fn readback(options: Options, json_output: bool) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prompt_covers_every_target_declaration() {
+        let text = prompt(
+            "structure First\ndef Second",
+            &["First".into(), "Second".into()],
+        );
+        assert!(text.contains("EVERY declaration"));
+        assert!(text.contains("Target declarations:\nFirst\nSecond"));
+        assert!(text.contains("structures, definitions, and instances"));
+        assert!(!text.contains("LAST declaration"));
+    }
 
     #[test]
     fn the_page_escapes_html() {
