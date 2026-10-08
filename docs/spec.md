@@ -831,6 +831,11 @@ The first forge Stemma supports is GitHub:
   adapter that installs it the way that harness reads it, in
   `.stemma/agent/<harness>/`, written anew at each start; the neutral form is
   in `.stemma/agent/equipment/` (`instructions.md`, and `skills/<name>/SKILL.md`).
+  No adapter writes outside the library's `.stemma/`, nor hides the person's
+  own instructions to their harness: Claude Code gets the instructions
+  appended to its system prompt, Codex and OpenCode in their configuration,
+  and DeepSeek Harness in its system prompt, through a configuration patch
+  passed when it starts.
 - **When a session starts**, the agent gets a short summary that costs no
   build: the branch, uncommitted changes, and work not yet in `main`. Claude
   Code and DeepSeek Harness get it from a hook passed when `stemma` starts

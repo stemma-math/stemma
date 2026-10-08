@@ -208,8 +208,8 @@ fn upgrade_moves_an_old_library_to_this_version() {
     );
     let plan: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(plan["from"], "0.1.0");
-    // From 0.1.0: two migrations of 0.2.0, one of 0.3.0 and three of 0.4.0.
-    assert_eq!(plan["migrations"].as_array().unwrap().len(), 6);
+    // From 0.1.0: two migrations of 0.2.0, one of 0.3.0 and two of 0.4.0.
+    assert_eq!(plan["migrations"].as_array().unwrap().len(), 5);
     assert!(read(dir.join("stemma.toml")).contains("self_merge"));
 
     // Without a terminal, it asks nothing, and says what follows: a
@@ -1890,8 +1890,12 @@ fn every_harness_gets_the_equipment_and_the_session_variable() {
     let patch = read(patch_path.clone());
     let patch: serde_json::Value =
         serde_json::from_str(&patch[patch.find('[').unwrap()..]).unwrap();
-    let home = PathBuf::from(patch[0]["config"]["dshHome"].as_str().unwrap());
-    assert!(read(home.join("AGENTS.md")).starts_with("# Working in a Stemma library"));
+    assert!(
+        patch[0]["config"]["personaSuffix"]
+            .as_str()
+            .unwrap()
+            .contains("# Working in a Stemma library")
+    );
     let skills_dir = PathBuf::from(patch[1]["config"]["customSkillDirs"][0].as_str().unwrap());
     for skill in skills {
         assert!(skills_dir.join(skill).join("SKILL.md").is_file());

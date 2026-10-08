@@ -1,9 +1,11 @@
 //! DeepSeek Harness (`dsh`), through a patch layer of its configuration
-//! (`dsh --patch <file>`), which this adapter writes for each start:
+//! (`dsh --patch <file>`), which this adapter writes for each start under
+//! `.stemma/agent/deepseek/`, and nothing outside it:
 //!
-//! - the instructions, as the user-level `AGENTS.md` its instruction loader
-//!   reads (`dshHome` of `@deepseek-ai/dsh-agent-instructions`), so that the
-//!   library's own `AGENTS.md` still follows it;
+//! - the instructions, as the persona suffix of its system prompt
+//!   (`personaSuffix` of `@deepseek-ai/dsh-system-prompt`), after the persona
+//!   its Web and headless profiles set; its instruction loader still reads
+//!   the person's own `~/.dsh/AGENTS.md` and the library's `AGENTS.md`;
 //! - the skills, as a directory of its filesystem skill provider
 //!   (`customSkillDirs` of `@deepseek-ai/dsh-skill-filesystem`);
 //! - hooks, through its bridge for Claude Code hooks
@@ -23,13 +25,26 @@ use super::{Equipment, Harness, INSTRUCTIONS, Setup, this_stemma};
 /// The profile `dsh` boots when the person names none: its Web UI.
 const DEFAULT_PROFILE: &str = "web";
 
+/// The persona its Web and headless profiles set, which the patch restates:
+/// a patch replaces a row's whole configuration.
+const PERSONA_PREFIX: &str = "You are a coding agent powered by the {{model}} model.";
+
+/// The persona suffix: what those profiles set, then the instructions.
+/// `{{…}}` is a variable there, which the instructions never contain.
+fn persona_suffix() -> String {
+    format!(
+        "Your working directory is {{{{cwd}}}}.\n\n{}",
+        INSTRUCTIONS.trim_end()
+    )
+}
+
 /// The patch layer, as YAML (written as JSON, which YAML reads alike).
-fn patch(home: &str, skills: &str, hooks: &str) -> serde_json::Value {
+fn patch(skills: &str, hooks: &str) -> serde_json::Value {
     json!([
         {
-            "id": "agent-instructions",
-            "name": "@deepseek-ai/dsh-agent-instructions",
-            "config": { "maxBytes": 65536, "dshHome": home },
+            "id": "system-prompt",
+            "name": "@deepseek-ai/dsh-system-prompt",
+            "config": { "personaPrefix": PERSONA_PREFIX, "personaSuffix": persona_suffix() },
         },
         {
             "id": "skill-filesystem",
@@ -63,9 +78,8 @@ fn hooks() -> serde_json::Value {
 /// the launcher's arguments that load them.
 pub fn prepare(equipment: &Equipment) -> Result<Setup> {
     let base = equipment.dir(Harness::Deepseek)?;
-    let home = base.join("home");
-    std::fs::create_dir_all(&home)?;
-    std::fs::write(home.join("AGENTS.md"), INSTRUCTIONS)?;
+    // Written by earlier versions; nothing reads it now.
+    let _ = std::fs::remove_dir_all(base.join("home"));
     let skills = base.join("skills");
     if skills.exists() {
         std::fs::remove_dir_all(&skills)?;
@@ -77,7 +91,6 @@ pub fn prepare(equipment: &Equipment) -> Result<Setup> {
     let text = format!(
         "# Written by `stemma agent deepseek` at each start; do not edit.\n{}\n",
         serde_json::to_string_pretty(&patch(
-            &home.display().to_string(),
             &skills.display().to_string(),
             &hooks_path.display().to_string(),
         ))?
@@ -140,14 +153,17 @@ mod tests {
 
     #[test]
     fn the_patch_equips_instructions_skills_and_hooks() {
-        let p = patch("/h", "/s", "/k.json");
-        assert_eq!(p[0]["config"]["dshHome"], "/h");
-        assert_eq!(p[0]["config"]["maxBytes"], 65536);
+        let p = patch("/s", "/k.json");
+        let suffix = p[0]["config"]["personaSuffix"].as_str().unwrap();
+        assert!(suffix.starts_with("Your working directory is {{cwd}}.\n\n# Working in a Stemma"));
+        assert_eq!(p[0]["config"]["personaPrefix"], PERSONA_PREFIX);
         assert_eq!(p[1]["config"]["customSkillDirs"][0], "/s");
         assert_eq!(
             p[2]["insert"][0]["name"],
             "@deepseek-ai/dsh-hooks-claude-code"
         );
+        // No row reads or writes the person's home.
+        assert!(!p.to_string().contains("dshHome"));
         let h = hooks();
         assert!(
             h["hooks"]["SessionStart"][0]["hooks"][0]["command"]
@@ -155,5 +171,11 @@ mod tests {
                 .unwrap()
                 .ends_with("--json hook session-start")
         );
+    }
+
+    #[test]
+    fn the_instructions_have_no_template_variables() {
+        // `{{…}}` would be a variable of dsh's persona template, and fail.
+        assert!(!INSTRUCTIONS.contains("{{"));
     }
 }

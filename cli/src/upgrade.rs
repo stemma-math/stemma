@@ -151,14 +151,6 @@ const MIGRATIONS: &[Migration] = &[
             change of the policy",
         apply: |files, _| site_publish(&mut files.config),
     },
-    Migration {
-        version: (0, 4, 0),
-        description: "the workflow has two required checks, `Stemma verify` (no build) and \
-            `Stemma check`, and caches what main built for pull requests; the repository's \
-            rules require both checks",
-        // The workflow is written from the template; the rules are set on the forge.
-        apply: |_, _| {},
-    },
 ];
 
 /// Writes `[site] publish = false`, unless the library says already what it
