@@ -324,6 +324,13 @@ pub fn run_checks(library: &Library, base: &str, json_output: bool) -> Result<Ch
         }
         Err(output) => (Some(output), None),
     };
+    let members: Vec<String> = library.config.members.keys().cloned().collect();
+    problems.extend(crate::sources::check(
+        &crate::sources::read(&library.dir),
+        &members,
+        report.as_ref(),
+        &std::fs::read_to_string(library.dir.join(REFERENCES)).unwrap_or_default(),
+    ));
     problems.dedup();
     Ok(Checks {
         problems,
@@ -394,6 +401,7 @@ pub fn status(json_output: bool) -> Result<bool> {
         })
         .collect();
     let warnings = crate::verify::keyless_warnings(&config);
+    let sources = crate::sources::coverage(&crate::sources::read(&library.dir), &report);
     if json_output {
         let environments: Vec<_> = report
             .environments
@@ -418,7 +426,7 @@ pub fn status(json_output: bool) -> Result<bool> {
             .collect();
         let value = json!({
             "environments": environments, "awaiting_signature": awaiting,
-            "warnings": warnings, "diagnostics": report.diagnostics,
+            "warnings": warnings, "diagnostics": report.diagnostics, "sources": sources,
         });
         println!("{}", serde_json::to_string_pretty(&value)?);
         return Ok(true);
@@ -501,6 +509,7 @@ pub fn status(json_output: bool) -> Result<bool> {
             println!("  {label:<width$}  {}", ui::state(state, 0));
         }
     }
+    show_sources(&sources);
     for w in &warnings {
         ui::warning(w);
     }
@@ -508,6 +517,47 @@ pub fn status(json_output: bool) -> Result<bool> {
         ui::error(&d.message);
     }
     Ok(true)
+}
+
+/// The coverage of the sources the library formalizes, by part and by owner.
+fn show_sources(sources: &[crate::sources::SourceCoverage]) {
+    for source in sources {
+        println!();
+        let title = source.title.as_deref().unwrap_or(&source.source);
+        let phase = match source.phase.as_deref() {
+            Some("planning") => " · the plan is being agreed",
+            Some("initial") => " · initial phase",
+            Some("ended") => " · initial phase ended",
+            _ => "",
+        };
+        println!(
+            "{} {}",
+            ui::bold(format!("Source: {title}")),
+            ui::dim(format!("sources/{}{phase}", source.source))
+        );
+        println!("  {}", ui::dim(source.coverage.line()));
+        let width = source
+            .parts
+            .iter()
+            .map(|p| p.title.chars().count())
+            .max()
+            .unwrap_or(0);
+        for part in &source.parts {
+            println!(
+                "  {:<width$}  {}",
+                part.title,
+                ui::dim(part.coverage.line())
+            );
+        }
+        println!("  {}", ui::bold("By owner"));
+        for owner in &source.owners {
+            println!(
+                "  {:<width$}  {}",
+                owner.owner.as_deref().unwrap_or("(nobody)"),
+                ui::dim(owner.coverage.line())
+            );
+        }
+    }
 }
 
 #[cfg(test)]

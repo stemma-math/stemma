@@ -29,6 +29,8 @@ library's Lean name, for example `Algebra`.
 │   └── <label>.toml
 ├── readings/              # curated readings: guides, papers (reserved)
 │   └── <reading>/
+├── sources/               # plans for formalizing existing sources
+│   └── <source>/          # source.toml, and one <part>.toml per part
 ├── .github/               # the forge's checks and rules (GitHub)
 ├── AGENTS.md              # the group's instructions for agents
 ├── README.md
@@ -46,6 +48,7 @@ Who writes each entry:
 | `references.bib` | agents; every entry checked by a person |
 | `signatures/` | the signing step only, never an agent |
 | `readings/` | agents, and people who want to |
+| `sources/` | agents, and people who want to |
 | `AGENTS.md` | the group, except a block at its top that `stemma` writes |
 | `.github/`, `.gitignore` | `stemma` only |
 
@@ -121,6 +124,54 @@ button that copies it. Central environments carry a mark, and their signature
 state (§3) when the site has it: `stemma preview` writes it, computed from
 `signatures/`, to `stemma-state.json` beside the pages. A site built without
 that file shows the marks and no state.
+
+### Source plans
+
+When a library formalizes an existing source (a book it builds on, a paper,
+notes), `sources/` holds the plan, versioned with the library so that the
+group shares one view of what is covered, by whom. Each source is a directory
+`sources/<source>/` with a `source.toml` and one file per part of the source
+(a chapter, say), so that members working on different parts do not
+conflict:
+
+```toml
+# sources/burris/source.toml
+title = "A Course in Universal Algebra"
+cite = "BurrisSankappanavar"   # optional: its key in references.bib
+phase = "initial"              # planning, initial or ended
+scope = "Chapters I and II: every numbered definition and result; no exercises."
+reuse = "Mathlib's lattices; the library's own algebras."   # optional
+conventions = "Operations are `Fin n → α → α`."             # optional
+```
+
+```toml
+# sources/burris/ch2.toml
+title = "II. The elements of universal algebra"
+owner = "alice"                # optional: the owner of its items, unless they say
+
+[[item]]
+ref = "Thm. II.3.5"            # where in the source; unique in the source
+kind = "statement"             # definition, statement, proof, remark, notation, example or exercise
+state = "blocked"              # planned, in-progress, done, blocked or excluded
+owner = "bob"                  # a member
+labels = ["burris.hom-thm"]    # the environments that cover it
+depends = ["Def. II.1.1"]      # refs of items of the same source
+reason = "Needs Thm. I.4.12, which is out of scope."   # for blocked and excluded
+```
+
+- The `phase` says where the group is: agreeing the plan (`planning`),
+  formalizing the source, part by part (`initial`), or done with that
+  (`ended`), which the group declares explicitly.
+- `stemma check` validates every plan, strictly: unknown fields, states,
+  kinds or phases are errors; an item `done` names its environments, which
+  must exist; one `blocked` or `excluded` says why; one `in-progress` has an
+  owner; owners are members (§1, "Configuration"); dependencies name items of
+  the same source and form no cycle; `cite` is a key of `references.bib`.
+- `stemma status` shows each source's coverage, by part and by owner: how
+  many items are planned, in progress, done, blocked or excluded, and how many
+  of those done are **proved**, that is, all their environments proved, with
+  no `sorry` and no accepted assumption. Coverage is never counted as proved
+  otherwise.
 
 ### Agent instructions are not copied into the library
 
@@ -819,8 +870,12 @@ The first forge Stemma supports is GitHub:
   ```
 
 - **Skills** teach the agent to write documents and environments, create
-  modules, share work, resolve conflicts, prepare signatures and ask for
-  read-backs.
+  modules, share work, resolve conflicts, prepare signatures, ask for
+  read-backs, and formalize a source faithfully, alone or as a group, with
+  its plan (§1, "Source plans"): the scope and the reuse of Mathlib agreed
+  once with the person, work in batches without asking to continue after each
+  one, and questions only for decisions that change meaning, ambiguities of
+  the source, missing hypotheses or blocking dependencies.
 
 ## 6. Command line
 
@@ -829,7 +884,7 @@ The first forge Stemma supports is GitHub:
 | `stemma init` | Creates a library: layout, `stemma.toml`, dependencies, git and its remote; in a terminal it asks what it needs |
 | `stemma new` | Creates a module (document or Lean) and adds it to the table of contents |
 | `stemma check` | Runs every check of this specification |
-| `stemma status` | Shows states: not formalized, pending, signatures, distance from `main` |
+| `stemma status` | Shows states: not formalized, pending, signatures, distance from `main`, and the coverage of source plans |
 | `stemma preview` | Builds the site and serves it locally |
 | `stemma share` | Shares the working branch through its share branch: brings `main` in, and opens or updates the pull request |
 | `stemma remote` | Shows or sets the personal remote working branches are saved to |

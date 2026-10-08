@@ -19,6 +19,7 @@ mod scope;
 mod share;
 mod sign;
 mod site;
+mod sources;
 mod templates;
 mod ui;
 mod upgrade;

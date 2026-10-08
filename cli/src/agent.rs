@@ -54,6 +54,10 @@ pub const SKILLS: &[(&str, &str)] = &[
         "stemma-signatures",
         include_str!("../agent/skills/stemma-signatures/SKILL.md"),
     ),
+    (
+        "stemma-sources",
+        include_str!("../agent/skills/stemma-sources/SKILL.md"),
+    ),
 ];
 
 /// The files only `stemma` writes, which agents may not edit, relative to the
@@ -533,6 +537,7 @@ mod tests {
             "# Doing mathematics",
             "# Saving and sharing",
             "# Signatures",
+            "# Formalizing a source",
         ] {
             assert!(text.contains(heading), "missing {heading}");
         }

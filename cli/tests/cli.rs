@@ -1823,6 +1823,7 @@ fn every_harness_gets_the_equipment_and_the_session_variable() {
         "stemma-documents",
         "stemma-sharing",
         "stemma-signatures",
+        "stemma-sources",
     ];
 
     // The neutral equipment, for any harness, and to equip one by hand.
@@ -2047,4 +2048,78 @@ fn hooks_give_the_summary_and_deny_protected_files_and_signing() {
             .unwrap()
             .contains("equipped by stemma")
     );
+}
+
+#[test]
+fn check_validates_source_plans_and_status_shows_their_coverage() {
+    let (dir, _, _) = library_of_alice("sources");
+    let bin = fake_lake(&dir);
+    let report = dir.join("report.json");
+    let claim = Claim {
+        label: "even-add",
+        lines: (3, 8),
+        formal: "sha256:f",
+    };
+    write_report(&report, std::slice::from_ref(&claim));
+    std::fs::create_dir_all(dir.join("signatures")).unwrap();
+    std::fs::write(dir.join("signatures/even-add.toml"), signature_of(&claim)).unwrap();
+    std::fs::write(
+        dir.join("references.bib"),
+        "@book{Book, author = {A}, title = {T}, year = {2000}}\n",
+    )
+    .unwrap();
+    let book = dir.join("sources/book");
+    std::fs::create_dir_all(&book).unwrap();
+    std::fs::write(
+        book.join("source.toml"),
+        "title = \"The book\"\ncite = \"Book\"\nphase = \"initial\"\n\
+         scope = \"Chapter 1, every numbered result.\"\n",
+    )
+    .unwrap();
+    let chapter = "title = \"1. Even numbers\"\nowner = \"alice\"\n\n\
+         [[item]]\nref = \"Def. 1.1\"\nkind = \"definition\"\nstate = \"planned\"\n\n\
+         [[item]]\nref = \"Thm. 1.2\"\nkind = \"statement\"\nstate = \"done\"\n\
+         labels = [\"even-add\"]\ndepends = [\"Def. 1.1\"]\n\n\
+         [[item]]\nref = \"Thm. 1.3\"\nkind = \"statement\"\nstate = \"blocked\"\n\
+         reason = \"Needs Chapter 2.\"\nowner = \"bob\"\n";
+    std::fs::write(book.join("ch1.toml"), chapter).unwrap();
+    let check = || json_of(&stemma_built(&dir, &bin, &report, &["check", "--json"]));
+    assert_eq!(check()["ok"], true, "{}", check());
+
+    let status = json_of(&stemma_built(&dir, &bin, &report, &["status", "--json"]));
+    let source = &status["sources"][0];
+    assert_eq!(source["source"], "book", "{status}");
+    assert_eq!(source["phase"], "initial");
+    assert_eq!(source["items"], 3);
+    assert_eq!(source["done"], 1);
+    assert_eq!(source["proved"], 1);
+    assert_eq!(source["parts"][0]["part"], "ch1");
+    assert_eq!(source["parts"][0]["blocked"], 1);
+    assert_eq!(source["owners"][0]["owner"], "alice");
+    assert_eq!(source["owners"][1]["owner"], "bob");
+    let text = String::from_utf8_lossy(&stemma_built(&dir, &bin, &report, &["status"]).stdout)
+        .into_owned();
+    assert!(text.contains("Source: The book"), "{text}");
+    assert!(text.contains("3 items · 1 done (1 proved)"), "{text}");
+
+    // An unknown state, a label no environment has, a cycle.
+    std::fs::write(
+        book.join("ch1.toml"),
+        chapter
+            .replace(
+                "state = \"planned\"",
+                "state = \"started\"\ndepends = [\"Thm. 1.2\"]",
+            )
+            .replace("[\"even-add\"]", "[\"even-mul\"]"),
+    )
+    .unwrap();
+    let c = check();
+    assert_eq!(c["ok"], false);
+    let problems = c["problems"].to_string();
+    assert!(problems.contains("unknown state 'started'"), "{problems}");
+    assert!(
+        problems.contains("no environment has the label 'even-mul'"),
+        "{problems}"
+    );
+    assert!(problems.contains("form a cycle"), "{problems}");
 }

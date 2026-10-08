@@ -19,9 +19,12 @@ they ask; but answer plainly when they do.
 - `<Library>.lean` is the **table of contents**: it imports every module once,
   in reading order.
 - `stemma.toml` holds the library's configuration and the group's members.
+- `sources/` holds the plans for formalizing existing sources (books,
+  papers), one directory per source.
 
-The skills `stemma-mathematics`, `stemma-documents`, `stemma-sharing` and
-`stemma-signatures` say how to work. Read the relevant one before acting.
+The skills `stemma-mathematics`, `stemma-documents`, `stemma-sharing`,
+`stemma-signatures` and `stemma-sources` say how to work. Read the relevant
+one before acting.
 
 ## Rules
 
