@@ -442,10 +442,32 @@ checks.
 
 ### Working
 
-- Each person works on a branch of their own, `work/<person>` by default,
-  which `stemma` creates the first time. Starting an agent does not
-  synchronize anything: the person works, and the agent commits and pushes to
-  that branch, which keeps the work safe and visible to the group.
+- Each person works on branches of their own: `work/<person>` by default, or
+  `work/<person>-<topic>` for a separate piece of work. A working branch is
+  never `work/<person>/<topic>`: git cannot hold `work/<person>` beside it.
+- Starting an agent (`stemma claude`, `stemma codex`) asks which branch to
+  work on: the current branch first (unless it is `main`), then the person's
+  other working branches with their state (commits ahead of `main`, an open or
+  merged pull request, uncommitted changes), then a new branch. It never
+  offers `main` nor a share branch. A new branch starts from an up-to-date
+  `main`, not from HEAD. `--branch <name>` and `--here` choose without asking;
+  without a question, starting from `main` moves to `work/<person>`.
+- When the current branch has uncommitted changes, the person chooses whether
+  to carry them to the other branch or to stay; nothing is ever discarded.
+  Without a question, it stays and says so.
+- Branches whose content is all in `main` (here and where they are saved) are
+  marked, and the picker offers to delete them, here and on their remote
+  (`--delete-merged` without asking). Nothing else is ever deleted: not a
+  branch with content missing from `main`, not one with an open pull request,
+  not the current branch.
+- Starting an agent does not synchronize anything: the person works, and the
+  agent commits and pushes the working branch, which keeps the work safe.
+- **Saving.** Working branches are pushed to the group's repository, unless
+  the person sets a **personal remote** (`stemma remote <url>`, or when their
+  first working branch is created). It lives in the clone's local git
+  configuration, never in `stemma.toml`. With one, working branches go there,
+  and only share branches go to the group's repository, so that drafts and
+  failed attempts are backed up without being visible to everyone.
 - A branch may mix several things: a person need not decide in advance what a
   piece of work will turn into.
 - People who know git work as they like (several branches, bringing `main` in
@@ -454,23 +476,53 @@ checks.
 
 ### Sharing
 
-- Sharing is the only moment that looks at `main`. The agent brings in what
-  is new there, resolves conflicts (asking the person, in mathematical terms,
-  when two changes disagree about content) and opens or updates a pull request
-  from the working branch.
-- Before it pushes, sharing works out what the change will lack. What the
-  person can give (a signature or an approval of theirs) stops it: they run
-  `stemma sign` first, so that the checks do not fail for it. What only
-  someone else can give is reported once the pull request is open.
+- Each working branch `work/<x>` is shared through a **share branch**,
+  `share/<x>`, in the group's repository, and the pull request comes from it.
+  So the working branch stays free while the pull request is open: work goes
+  on, and reaches the pull request only when it is shared again.
+- **The invariant:** `share/<x>` only ever points at a commit of `work/<x>`.
+  Neither `stemma` nor anyone else commits on it. Sharing moves it forward to
+  HEAD, or to an earlier commit the person chooses (whose later signatures and
+  approvals are then not included, and sharing says so).
+- Everything sharing needs happens on the working branch. Sharing is the only
+  moment that looks at `main`: it brings in what is new there, and conflicts
+  are resolved on the working branch (asking the person, in mathematical
+  terms, when two changes disagree about content).
+- Sharing derives its state from git each time, comparing the working branch
+  with `share/<x>` as it is in the group's repository (never only a local
+  copy, which another machine may have left behind). There is no state file.
+  - When `share/<x>` has commits the working branch lacks, made elsewhere (the
+    forge's "Update branch", an accepted suggestion, another push), they are
+    never overwritten silently: sharing shows them, and brings them into the
+    working branch, or discards them after a confirmation that lists what is
+    lost. Without a question, it stops and explains.
+  - When the working branch was rewritten after sharing (a rebase, an amend)
+    and every commit on `share/<x>` came from its earlier history, sharing
+    asks, then replaces it with `--force-with-lease`. Otherwise those commits
+    count as made elsewhere.
+- Before it pushes, sharing shows the state (the branch, its environments,
+  the checks, whether bringing in `main` conflicts) and works out what the
+  change will lack. What the person can give (a signature or an approval of
+  theirs) stops it, and offers to sign now, so that the checks do not fail
+  for it. What only someone else can give is reported once the pull request
+  is open. Updating an open pull request is confirmed, since the approvals of
+  its current content stop counting. The title and body of a new pull request
+  are the person's to edit.
+- From an agent's session, sharing asks nothing: it shares HEAD, and stops
+  with an explanation whenever a decision is needed. By default, an agent asks
+  the person before sharing.
 - Sharing from `main` moves the work to a working branch first.
+- A pull request opened by an earlier version from the working branch itself
+  is updated as before until it is merged; after that, sharing goes through
+  the share branch.
 - `stemma status` says how far a branch is from `main`, as information. It
   never forces a synchronization.
 - When part of a branch needs a signature and part does not, the agent offers
   to split it into two pull requests, so that the second waits without holding
   back the first. The person decides.
-- Pull requests are merged without squashing, so that the working branch stays
-  valid after its work reaches `main`, and the next pull request carries only
-  what is new.
+- Pull requests are merged with merge commits only, never squashed nor
+  rebased (the forge enforces it), so that the working branch stays valid after
+  its work reaches `main`, and the next pull request carries only what is new.
 
 ### Checks
 
@@ -531,8 +583,9 @@ The first forge Stemma supports is GitHub:
 
 | Piece | On GitHub |
 |---|---|
-| `main` changes only through pull requests | A ruleset on `main`: pull requests required, no direct or forced pushes |
-| Required checks | A GitHub Actions workflow written by `stemma` (`.github/workflows/stemma.yml`) that runs `stemma check` and `stemma verify`, marked as a required status check |
+| `main` changes only through pull requests | A ruleset on `main`: pull requests required, no direct or forced pushes, no deletion |
+| Merge commits only | The repository allows merge commits, and neither squash nor rebase merging |
+| Required checks | A GitHub Actions workflow written by `stemma` (`.github/workflows/stemma.yml`) that runs `stemma check` and `stemma verify`; its check, `Stemma`, is required by the ruleset (without requiring branches to be up to date, which would make the forge commit on share branches) |
 | Signatures and approvals | Signed commits, checked by `stemma verify` with git against the members' keys: GitHub's reviews play no part |
 | The library's site | GitHub Pages, published from `main` by the same workflow |
 
@@ -540,8 +593,14 @@ The first forge Stemma supports is GitHub:
   so it gives the same answer on GitHub, on any other forge, and on a
   person's machine.
 - Builds cache `.lake` between runs.
-- `stemma` sets the repository up (rules, workflow, Pages) when it creates the
-  library.
+- `stemma` sets the repository up (rules, required check, merge commits only,
+  workflow, Pages) when it creates the library, and `stemma upgrade` applies
+  the same setup to existing libraries. When the forge's command line is
+  missing or lacks permission, it says exactly what to set by hand, and the
+  rest goes on.
+- Everything `stemma` asks of a forge (who the person is, finding and opening
+  pull requests, setting the repository up) goes through one part of it, so
+  that other forges can be supported.
 
 ## 5. Agents
 
@@ -582,7 +641,8 @@ The first forge Stemma supports is GitHub:
 | `stemma check` | Runs every check of this specification |
 | `stemma status` | Shows states: not formalized, pending, signatures, distance from `main` |
 | `stemma preview` | Builds the site and serves it locally |
-| `stemma share` | Brings `main` in, and opens or updates the pull request |
+| `stemma share` | Shares the working branch through its share branch: brings `main` in, and opens or updates the pull request |
+| `stemma remote` | Shows or sets the personal remote working branches are saved to |
 | `stemma upgrade` | Moves the library to this version of `stemma`: migrations, the files only `stemma` writes, and the dependencies |
 | `stemma verify` | Whether a change carries the signatures and approvals it needs, from git alone |
 | `stemma sign` | Signs environments and approves changes, in an interactive terminal |
@@ -591,12 +651,29 @@ The first forge Stemma supports is GitHub:
 
 Every command has a `--json` output for agents.
 
+### When a command asks
+
+Some commands need a person's decisions (which branch to work on, what to
+share). A command asks questions only when all of these hold:
+
+- stdin and stdout are terminals;
+- it is not running in an agent's session;
+- there is no `--json`;
+- there is no `--yes`.
+
+Every question has an equivalent flag, so that advanced users and agents run
+the same commands without prompts, and `--yes` accepts what the command would
+do. Without questions, a consequential decision is never guessed: when it has
+no safe default and no flag gives it, the command fails and names the flag to
+pass. Decisions that discard work or force a push are a person's: they are
+never taken in an agent's session, whatever the flags.
+
 ## Deferred
 
 These are left for later versions:
 
-- **Private work.** In this version there is none: working branches already
-  keep work out of `main` until it is shared.
+- **Private work.** Beyond a personal remote (§4), there is none: working
+  branches already keep work out of `main` until it is shared.
 - **Readings.** Their format, how they cite the library, and where papers
   live.
 - **References across libraries.** How a document cites an environment of
