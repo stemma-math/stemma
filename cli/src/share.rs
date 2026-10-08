@@ -420,10 +420,15 @@ fn reconcile(
                     .collect();
                 screen.note("These commits will be lost", lost.join("\n"))?;
                 let discard = interact::confirm(
-                    format!(
-                        "Discard these {} commits? They are on no branch of yours, nor in main.",
-                        lost.len()
-                    ),
+                    if lost.len() == 1 {
+                        "Discard this commit? It is on no branch of yours, nor in main.".to_string()
+                    } else {
+                        format!(
+                            "Discard these {} commits? They are on no branch of yours, nor in \
+                             main.",
+                            lost.len()
+                        )
+                    },
                     false,
                 )?;
                 if !discard {
@@ -701,7 +706,12 @@ fn share_branch(library: &Library, options: &Options, mode: Mode, json: bool) ->
         o.left_out = left_out;
         let later = commits(dir, &[&range]).len();
         screen.warning(format!(
-            "Sharing up to an earlier commit: the {later} later commits are not included{}",
+            "Sharing up to an earlier commit: {} not included{}",
+            if later == 1 {
+                "the later commit is".to_string()
+            } else {
+                format!("the {later} later commits are")
+            },
             if o.left_out.is_empty() {
                 ".".to_string()
             } else {
@@ -753,12 +763,15 @@ fn share_branch(library: &Library, options: &Options, mode: Mode, json: bool) ->
     let mut body = options.body.clone().unwrap_or(default_body);
     if open.is_none() && mode.interactive() {
         if options.title.is_none() {
-            title = interact::text("The pull request's title", &title, |t| {
+            title = interact::text("The pull request's title (Enter keeps it)", &title, |t| {
                 t.trim().is_empty().then_some("a title is needed")
             })?;
         }
         if options.body.is_none() {
-            body = interact::paragraph("Its description (Esc, then Enter, to go on)", &body)?;
+            body = interact::paragraph(
+                "Its description (Enter keeps it; to write another, type it, then Esc and Enter)",
+                &body,
+            )?;
         }
     }
 

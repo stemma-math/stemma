@@ -137,8 +137,8 @@ pub fn multiselect<T: Clone + Eq>(
     )
 }
 
-/// A line of text, starting from `default`, checked by `valid` (which says
-/// what is wrong).
+/// A line of text, checked by `valid` (which says what is wrong). `default`
+/// is shown, and Enter takes it; typing replaces it.
 pub fn text(
     prompt: impl Display,
     default: &str,
@@ -155,7 +155,8 @@ pub fn text(
     )
 }
 
-/// Several lines of text, starting from `default`; Esc submits them.
+/// Several lines of text. `default` is shown, and Enter takes it; typing
+/// replaces it, and Esc, then Enter, submits what was typed.
 pub fn paragraph(prompt: impl Display, default: &str) -> Result<String> {
     let mut input = cliclack::input(prompt).multiline().required(false);
     if !default.is_empty() {
