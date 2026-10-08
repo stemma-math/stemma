@@ -163,6 +163,15 @@ enum Commands {
         #[arg(long)]
         no_build: bool,
     },
+    /// Show or set the personal remote your working branches are saved to.
+    Remote {
+        /// The personal remote's URL. Working branches are saved there, and
+        /// only share branches go to the group's repository.
+        url: Option<String>,
+        /// Save working branches to the group's repository again.
+        #[arg(long)]
+        unset: bool,
+    },
     /// Move the library to this version of stemma.
     Upgrade {
         /// Show what would change without changing anything.
@@ -195,6 +204,20 @@ struct AgentArgs {
     /// Print the command instead of running it.
     #[arg(long)]
     dry_run: bool,
+    /// Work on this branch: an existing one, or a new working branch
+    /// (work/<person>-<topic>) from an up-to-date main.
+    #[arg(long, value_name = "NAME")]
+    branch: Option<String>,
+    /// Work on the current branch.
+    #[arg(long, conflicts_with = "branch")]
+    here: bool,
+    /// Delete your working branches whose content is all in main, here and on
+    /// their remote.
+    #[arg(long)]
+    delete_merged: bool,
+    /// Ask nothing: take what stemma would do.
+    #[arg(long, short)]
+    yes: bool,
     /// Arguments passed on to the agent.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     args: Vec<String>,
@@ -213,8 +236,14 @@ fn hook(event: &str) -> anyhow::Result<bool> {
 }
 
 /// Starts an agent, or prints how it would be started.
-fn start(agent: agent::Agent, args: AgentArgs) -> anyhow::Result<bool> {
-    let launch = agent::prepare(agent, args.args, args.dry_run)?;
+fn start(agent: agent::Agent, args: AgentArgs, json: bool) -> anyhow::Result<bool> {
+    let request = branches::Request {
+        branch: args.branch,
+        here: args.here,
+        delete_merged: args.delete_merged,
+    };
+    let mode = interact::Mode::detect(json, args.yes);
+    let launch = agent::prepare(agent, args.args, args.dry_run, &request, mode)?;
     if args.dry_run {
         let value = serde_json::json!({
             "program": launch.program, "args": launch.args,
@@ -223,7 +252,9 @@ fn start(agent: agent::Agent, args: AgentArgs) -> anyhow::Result<bool> {
         println!("{}", serde_json::to_string_pretty(&value)?);
         return Ok(true);
     }
-    if let Some(branch) = &launch.branch {
+    if let Some(branch) = &launch.branch
+        && !mode.interactive()
+    {
         ui::note(format!("Working on the branch {branch}."));
     }
     launch.run()
@@ -322,9 +353,10 @@ fn main() -> ExitCode {
             no_commit,
             no_forge,
         } => upgrade::upgrade(dry_run, !no_update, !no_commit, !no_forge, cli.json),
+        Commands::Remote { url, unset } => branches::remote_command(url, unset, cli.json),
         Commands::Hook { event } => hook(&event),
-        Commands::Claude(args) => start(agent::Agent::Claude, args),
-        Commands::Codex(args) => start(agent::Agent::Codex, args),
+        Commands::Claude(args) => start(agent::Agent::Claude, args, cli.json),
+        Commands::Codex(args) => start(agent::Agent::Codex, args, cli.json),
     };
     match result {
         Ok(true) => ExitCode::SUCCESS,
