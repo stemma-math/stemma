@@ -30,7 +30,7 @@ use crate::commands::{self, Checks};
 use crate::forge::{self, PullRequest};
 use crate::interact::{self, Mode};
 use crate::library::Library;
-use crate::report::{Environment, Report, Signature};
+use crate::report::{Report, Signature};
 use crate::ui;
 
 /// What to do with foreign commits on the remote share branch.
@@ -94,6 +94,10 @@ struct Outcome {
     forge_error: Option<String>,
     /// Why sharing stopped before pushing, and what to do.
     stopped: Option<String>,
+    /// The definitions and statements the branch adds, and which of them are
+    /// central.
+    new: Vec<String>,
+    new_central: Vec<String>,
 }
 
 /// One line per commit, as `<short hash> <subject>`.
@@ -208,31 +212,6 @@ impl Screen {
         }
         Ok(())
     }
-}
-
-/// The environments of the modules this branch changes.
-///
-/// This is where the environments that are new on the branch belong, once the
-/// library can tell them apart (by their labels on `main`); until then, those
-/// of the modules the branch touches are the closest it knows.
-fn branch_environments<'a>(library: &Library, report: &'a Report) -> Vec<&'a Environment> {
-    let changed = git_ok(
-        &library.dir,
-        &["diff", "--name-only", &format!("{ORIGIN}/{MAIN}...HEAD")],
-    )
-    .unwrap_or_default();
-    let changed: Vec<&str> = changed.lines().collect();
-    report
-        .environments
-        .iter()
-        .filter(|env| {
-            let path = library.module_path(&env.record.module);
-            path.strip_prefix(&library.dir)
-                .ok()
-                .and_then(|p| p.to_str())
-                .is_some_and(|p| changed.contains(&p))
-        })
-        .collect()
 }
 
 /// What the change lacks: what the person can supply, and what only others can.
@@ -539,10 +518,12 @@ fn share_branch(library: &Library, options: &Options, mode: Mode, json: bool) ->
         screen.success(format!("Brought what is new on main into {branch}."))?;
     }
 
-    // 3. The checks.
+    // 3. The checks. Signatures the policy requires are not a failure here:
+    // they are what the change lacks, said below, for the person or for others
+    // to give.
     let report = if options.build {
-        let mut checks = commands::run_checks(library, json || mode.interactive())?;
-        let ok = checks.ok();
+        let mut checks = commands::run_checks(library, &main, json || mode.interactive())?;
+        let ok = checks.ok_but_signatures();
         let report = checks.report.take();
         o.checks = Some(checks);
         if !ok {
@@ -565,30 +546,34 @@ fn share_branch(library: &Library, options: &Options, mode: Mode, json: bool) ->
         }
     )];
     if let Some(report) = &report {
+        let scope = crate::scope::Scope::of_branch(dir, &main)?;
+        let mut new_signed = 0;
         for env in &report.environments {
-            if env.signature(dir) == Some(Signature::Unsigned) {
-                o.unsigned
-                    .push(env.record.label.clone().unwrap_or_default());
+            let label = env.record.label.clone().unwrap_or_default();
+            let signature = env.signature(dir);
+            if signature == Some(Signature::Unsigned) {
+                o.unsigned.push(label.clone());
+            }
+            let claim = matches!(env.record.base.as_str(), "definition" | "statement");
+            if claim && scope.is_new(library, env) {
+                if env.record.central {
+                    o.new_central.push(label.clone());
+                    if signature == Some(Signature::Signed) {
+                        new_signed += 1;
+                    }
+                }
+                o.new.push(label);
             }
         }
-        let envs = branch_environments(library, report);
-        let claims: Vec<_> = envs
-            .iter()
-            .filter(|e| matches!(e.record.base.as_str(), "definition" | "statement"))
-            .collect();
-        let central = claims.iter().filter(|e| e.record.central).count();
-        let signed = claims
-            .iter()
-            .filter(|e| e.signature(dir) == Some(Signature::Signed))
-            .count();
         state.push(format!(
-            "Environments in the modules it changes: {} ({central} central, {signed} signed)",
-            envs.len()
+            "New definitions and statements: {} ({} central, {new_signed} signed)",
+            o.new.len(),
+            o.new_central.len()
         ));
-        state.push("Checks: every check passes".into());
-        if !claims.is_empty() && central == 0 {
+        state.push("Checks: every check passes, but for the signatures said below".into());
+        if !o.new.is_empty() && o.new_central.is_empty() {
             screen.warning(
-                "This branch has definitions or statements, and none is central: nothing in \
+                "This branch adds definitions or statements, and none is central: nothing in \
                  it will be signed. Make the ones that matter central first.",
             )?;
         }
@@ -839,7 +824,9 @@ pub fn share(options: Options, json_output: bool) -> Result<bool> {
     let library = Library::find(Path::new("."))?;
     let mode = Mode::detect(json_output, options.yes);
     let o = share_branch(&library, &options, mode, json_output)?;
-    let checks_ok = o.checks.as_ref().is_none_or(Checks::ok);
+    // Signatures the policy requires are not a failure here: they are what
+    // the change lacks, said apart, for the person or for others to give.
+    let checks_ok = o.checks.as_ref().is_none_or(Checks::ok_but_signatures);
     let shared = o.pull_request.is_some() || o.pushed;
     let ok = o.conflicts.is_empty() && checks_ok && o.stopped.is_none() && shared;
     if json_output {
@@ -858,6 +845,8 @@ pub fn share(options: Options, json_output: bool) -> Result<bool> {
             "from_working_branch": o.from_working_branch, "forge_error": o.forge_error,
             "needs_you": o.needs_you, "needs_others": o.needs_others,
             "unsigned": o.unsigned, "stopped": o.stopped,
+            "new_environments": { "count": o.new.len(), "labels": o.new,
+                "central": o.new_central.len(), "central_labels": o.new_central },
         });
         println!("{}", serde_json::to_string_pretty(&value)?);
         return Ok(ok);
@@ -896,6 +885,18 @@ pub fn share(options: Options, json_output: bool) -> Result<bool> {
             ui::error(p);
         }
         return Ok(false);
+    }
+    if !o.new.is_empty() && !interactive {
+        ui::note(format!(
+            "This branch adds {} definitions and statements; {} of them central{}.",
+            o.new.len(),
+            o.new_central.len(),
+            if o.new_central.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", o.new_central.join(", "))
+            }
+        ));
     }
     if let Some(stopped) = &o.stopped {
         if interactive {

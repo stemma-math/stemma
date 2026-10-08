@@ -42,8 +42,9 @@ fn git(dir: &Path, args: &[&str]) -> Result<String> {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum Missing {
-    /// A signed environment is stale: a signer must sign it again.
-    Signature { label: String },
+    /// A central environment lacks a current signature: it is stale (signed,
+    /// but changed since), or unsigned while the policy requires signatures.
+    Signature { label: String, state: Signature },
     /// A signature applies to no central environment any more (it was
     /// removed, made not central, or relabelled): a signer must withdraw it.
     Withdrawal { label: String },
@@ -56,7 +57,11 @@ pub enum Missing {
 impl Missing {
     pub fn describe(&self) -> String {
         match self {
-            Missing::Signature { label } => {
+            Missing::Signature {
+                label,
+                state: Signature::Unsigned,
+            } => format!("'{label}' is central and unsigned: a signer must sign it."),
+            Missing::Signature { label, .. } => {
                 format!("The signature of '{label}' is stale: it must be signed again.")
             }
             Missing::Withdrawal { label } => format!(
@@ -90,6 +95,8 @@ pub struct Verdict {
     pub base_config: Config,
     pub missing: Vec<Missing>,
     pub notes: Vec<String>,
+    /// What does not block the change but should be fixed.
+    pub warnings: Vec<String>,
     /// The kinds of change, and the members who validly approved each.
     pub approvals: BTreeMap<String, BTreeSet<String>>,
 }
@@ -206,21 +213,31 @@ fn approved_kinds(dir: &Path, sha: &str) -> Result<Vec<String>> {
 /// and new central environments are not looked at.
 pub fn evaluate(library: &Library, base: &str, report: Option<&Report>) -> Result<Verdict> {
     let dir = &library.dir;
-    let base_config = match git(dir, &["show", &format!("{base}:stemma.toml")]) {
-        Ok(text) => Config::parse(&text).context("reading stemma.toml at the base")?,
-        Err(_) => Config::read(dir)?,
-    };
+    let base_config = Config::judging(dir, base).context("reading stemma.toml at the base")?;
     let verifier = Verifier::new(&base_config)?;
     let mut missing = Vec::new();
     let mut notes = Vec::new();
 
     match report {
         Some(report) => {
+            let required = base_config.policy.require_signed_central;
             for env in &report.environments {
-                if env.signature(dir) == Some(Signature::Stale) {
-                    missing.push(Missing::Signature {
-                        label: env.record.label.clone().unwrap_or_default(),
-                    });
+                let label = env.record.label.clone().unwrap_or_default();
+                match env.signature(dir) {
+                    Some(Signature::Stale) => missing.push(Missing::Signature {
+                        label,
+                        state: Signature::Stale,
+                    }),
+                    Some(Signature::Unsigned) if required && env.fingerprints.is_none() => {
+                        missing.push(Missing::Problem {
+                            message: unformalized_central(&label),
+                        });
+                    }
+                    Some(Signature::Unsigned) if required => missing.push(Missing::Signature {
+                        label,
+                        state: Signature::Unsigned,
+                    }),
+                    _ => {}
                 }
             }
             // Every signature must apply to a central environment.
@@ -336,19 +353,37 @@ pub fn evaluate(library: &Library, base: &str, report: Option<&Report>) -> Resul
             });
         }
     }
-    for (name, member) in &base_config.members {
-        if !member.roles.is_empty() && member.keys.is_empty() {
-            notes.push(format!(
-                "{name} has roles but no keys in stemma.toml, so cannot sign or approve."
-            ));
-        }
-    }
+    let warnings = keyless_warnings(&base_config);
     Ok(Verdict {
         base_config,
         missing,
         notes,
+        warnings,
         approvals,
     })
+}
+
+/// What is said of a central environment that cannot be signed yet.
+pub fn unformalized_central(label: &str) -> String {
+    format!(
+        "'{label}' is central and not formalized yet, so it cannot be signed: formalize it, \
+         or make it not central."
+    )
+}
+
+/// Warnings about members who sign or approve, by their roles, but have no
+/// key to do it with.
+pub fn keyless_warnings(config: &Config) -> Vec<String> {
+    config
+        .keyless()
+        .into_iter()
+        .map(|name| {
+            format!(
+                "{name} signs or approves, by their roles, but has no key in stemma.toml: they \
+                 register one with `stemma key add`."
+            )
+        })
+        .collect()
 }
 
 /// The labels of the signature files at HEAD.
@@ -367,8 +402,9 @@ pub fn verify(base: Option<String>, build: bool, json_output: bool) -> Result<bo
     let base = base.unwrap_or_else(|| "origin/main".into());
     let mut problems = Vec::new();
     let report = if build {
-        let checks = commands::run_checks(&library, json_output)?;
-        if !checks.ok() {
+        let checks = commands::run_checks(&library, &base, json_output)?;
+        // What lacks a signature is said below, label by label.
+        if !checks.ok_but_signatures() {
             problems.push("`stemma check` fails: run it to see why.".to_string());
         }
         checks.report
@@ -382,12 +418,16 @@ pub fn verify(base: Option<String>, build: bool, json_output: bool) -> Result<bo
     if json_output {
         let value = json!({
             "ok": ok, "base": base, "failures": failures, "missing": verdict.missing,
-            "notes": verdict.notes, "approvals": verdict.approvals,
+            "notes": verdict.notes, "warnings": verdict.warnings,
+            "approvals": verdict.approvals,
         });
         println!("{}", serde_json::to_string_pretty(&value)?);
     } else {
         for f in &failures {
             ui::error(f);
+        }
+        for w in &verdict.warnings {
+            ui::warning(w);
         }
         for n in &verdict.notes {
             ui::note(n);

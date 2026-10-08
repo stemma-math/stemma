@@ -12,15 +12,23 @@ re-proving a signed statement needs no signature.
 
 ## What needs a signature
 
-A pull request that leaves a signed environment *stale* is not merged until it
-carries new signatures. That happens when it:
+Central means signed by a person. Unless the group turned it off
+(`require_signed_central = false` in `stemma.toml`), every central environment
+must carry a current signature: `stemma check` fails while one is *unsigned*
+or *stale*, and names it. That includes new central environments, and central
+environments already on `main` that nobody signed yet.
+
+A signed environment becomes *stale*, and needs a new signature, when a
+change:
 
 - changes the prose or the formal meaning of a signed environment, including
   through something it uses (a helper definition, a Mathlib update);
 - removes a signed environment, or makes it not central;
 - changes its label or its `cited` mark.
 
-New central environments enter unsigned; nothing waits for them.
+When `stemma check` fails only because central environments lack
+signatures, that is not something you fix: it is the person's (or another
+signer's) act. Say which ones, and keep working.
 
 ## Approvals
 
@@ -37,15 +45,37 @@ lists what a change lacks.
   person asks you to: both are a person's act.
 - Before changing anything central, say so, and say which signatures it will
   need.
-- Use `stemma status --json` to see what is unsigned or stale.
+- Use `stemma status --json` to see what is unsigned or stale
+  (`awaiting_signature`), and `stemma verify --json` for what a change lacks.
 - When signatures or approvals are needed, tell the person which ones, why
   (what changed), and what to check: that the prose and the Lean statement say
   the same thing, or what the change does. Then ask them to run, in their own
   terminal:
 
   ```sh
-  stemma sign
+  stemma sign                 # everything that awaits them, chosen item by item
+  stemma sign <label> …       # only these environments
   ```
+
+  `stemma sign` shows what this branch brings apart from what others left
+  pending, and the person chooses what to sign, one by one: they need not sign
+  everything at once. Suggest the labels when only some are ready.
+
+## Keys
+
+A member signs with a key listed for them in `stemma.toml` on `main`. When
+someone with the `signer` or `maintainer` role has none (`stemma status` and
+`stemma verify` warn about it), tell them to register one in their own
+terminal, preferably a key used only for signing:
+
+```sh
+stemma key add                  # the key git signs with (user.signingkey)
+stemma key add --key <path>     # another public key
+```
+
+It makes a change of the policy, on a branch, that another maintainer whose
+key is already on `main` approves: nobody approves their own first key. Never
+run `stemma key` yourself, and never edit the keys in `stemma.toml`.
 
 ## Read-backs
 

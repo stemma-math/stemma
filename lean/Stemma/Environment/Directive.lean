@@ -229,9 +229,11 @@ def expandEnvironment (name : Name) (display : String) (base : BaseKind) (marks 
     (a.1.line == b.1.line && (a.1.column < b.1.column ||
       (a.1.column == b.1.column && Name.lt a.2 b.2)))) |>.map (·.2)
   checkDecls marks decls
-  let line := (← getFileMap).toPosition (ref.getPos?.getD 0) |>.line
+  let fileMap ← getFileMap
+  let line := fileMap.toPosition (ref.getPos?.getD 0) |>.line
+  let endLine := max line (fileMap.toPosition (ref.getTailPos?.getD 0) |>.line)
   modifyEnv (recordExt.addEntry · {
-    name, display, base, decls, line
+    name, display, base, decls, line, endLine
     label := marks.label, central := marks.central, cited := marks.cited
     title := marks.title, of := marks.of
     prose := ← sourceOf contents (lean := false)
