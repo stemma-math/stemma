@@ -52,8 +52,7 @@ const FORBIDDEN_COMMANDS: &[&str] = &[
     "git push origin HEAD:main",
 ];
 
-/// The environment variable that marks a process as part of an agent's session.
-pub const SESSION_VARIABLE: &str = "STEMMA_SESSION";
+pub use crate::interact::SESSION_VARIABLE;
 
 /// The agents `stemma` can start.
 #[derive(Clone, Copy)]

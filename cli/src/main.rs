@@ -7,6 +7,7 @@ mod commands;
 mod config;
 mod help;
 mod init;
+mod interact;
 mod keys;
 mod lake;
 mod library;

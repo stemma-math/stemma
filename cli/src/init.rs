@@ -1,7 +1,6 @@
 //! `stemma init`: creates a library, asking what it needs when run in a
 //! terminal.
 
-use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -173,10 +172,7 @@ fn step<T>(interactive: bool, json_output: bool, message: &str, f: impl FnOnce()
 
 /// `stemma init`.
 pub fn init(options: Options, json_output: bool) -> Result<()> {
-    let interactive = !options.yes
-        && !json_output
-        && std::io::stdin().is_terminal()
-        && std::io::stdout().is_terminal();
+    let interactive = crate::interact::Mode::detect(json_output, options.yes).interactive();
     let ask = Asker { interactive };
     if interactive {
         cliclack::intro(ui::bold(" stemma init "))?;
