@@ -66,6 +66,10 @@ jobs:
     needs: [version, build]
     runs-on: ubuntu-latest
     steps:
+      # The release notes, when the release has them: docs/releases/v<version>.md.
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: docs/releases
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
@@ -78,6 +82,9 @@ jobs:
         run: |
           # While Stemma is 0.x, every release is a pre-release.
           prerelease=$([[ "$VERSION" == 0.* ]] && echo --prerelease || true)
+          # Written notes go first, followed by the list GitHub generates.
+          notes=docs/releases/v$VERSION.md
+          [[ -f "$notes" ]] && notes_file=(--notes-file "$notes") || notes_file=()
           gh release create "v$VERSION" stemma-*.tar.gz SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "v$VERSION" --generate-notes $prerelease
+            --title "v$VERSION" "${notes_file[@]}" --generate-notes $prerelease
