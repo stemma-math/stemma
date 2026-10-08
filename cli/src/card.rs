@@ -231,6 +231,8 @@ mod tests {
             "theorem t : True := trivial",
         )
         .render_at(10, 40);
+        // Whether colors are on depends on where the tests run.
+        let text = console::strip_ansi_codes(&text).into_owned();
         let lines: Vec<&str> = text.lines().collect();
         assert!(lines[0].starts_with("Theorem     even-add"), "{text}");
         assert!(lines[0].ends_with("new"), "{text}");
@@ -246,6 +248,7 @@ mod tests {
     fn long_items_show_only_where_to_read_them() {
         let prose = "A paragraph.\n\n".repeat(20);
         let text = card(&prose, "theorem t : True := trivial").render_at(8, 80);
+        let text = console::strip_ansi_codes(&text).into_owned();
         assert!(text.contains("Too long to show here"), "{text}");
         assert!(!text.contains("A paragraph."), "{text}");
         assert!(text.contains("Alg/Even.lean:3-9"));
