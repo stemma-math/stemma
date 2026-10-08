@@ -83,6 +83,11 @@ pub fn add_member_key(doc: &mut DocumentMut, name: &str, key: &str) {
 }
 
 /// Every migration, oldest first.
+///
+/// A migration is marked with the version that introduces it, which may be the
+/// next one while it is being developed: `Cargo.toml` changes only when that
+/// version is released. Every migration must be idempotent, since a library
+/// upgraded with a development build gets it again with the release.
 const MIGRATIONS: &[Migration] = &[
     Migration {
         version: (0, 2, 0),
@@ -175,10 +180,9 @@ fn plan(library: &Library) -> Result<Plan> {
         agents: read("AGENTS.md"),
     };
     let mut migrations = Vec::new();
-    for m in MIGRATIONS
-        .iter()
-        .filter(|m| m.version > from && m.version <= to)
-    {
+    // Every migration newer than the library, including those of the version
+    // being developed (see `MIGRATIONS`).
+    for m in MIGRATIONS.iter().filter(|m| m.version > from) {
         (m.apply)(&mut files, &config.title);
         migrations.push(m.description);
     }
@@ -395,6 +399,37 @@ mod tests {
         let c: toml::Value = toml::from_str(&d.to_string()).unwrap();
         assert_eq!(c["library"]["stemma"].as_str(), Some("0.3.0"));
         assert!(c["members"]["stemma"].is_table());
+    }
+
+    #[test]
+    fn migrations_are_idempotent() {
+        let config = "[library]\nname = \"T\"\ntitle = \"T\"\nstemma = \"0.1.0\"\n\n\
+            [members]\nalice = { roles = [\"maintainer\"] }\n\n\
+            [policy]\nself_merge = [\"signer\"]\n\n[signatures]\ndistinct_from_author = true\n";
+        for m in MIGRATIONS {
+            let mut once = Files {
+                config: doc(config),
+                agents: None,
+            };
+            (m.apply)(&mut once, "T");
+            let mut twice = Files {
+                config: once.config.clone(),
+                agents: once.agents.clone(),
+            };
+            (m.apply)(&mut twice, "T");
+            assert_eq!(
+                twice.config.to_string(),
+                once.config.to_string(),
+                "{}",
+                m.description
+            );
+            assert_eq!(twice.agents, once.agents, "{}", m.description);
+        }
+    }
+
+    #[test]
+    fn migrations_are_in_order() {
+        assert!(MIGRATIONS.windows(2).all(|w| w[0].version <= w[1].version));
     }
 
     #[test]
