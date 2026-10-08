@@ -80,14 +80,36 @@ run `stemma key` yourself, and never edit the keys in `stemma.toml`.
 ## Read-backs
 
 A read-back translates an environment's Lean into prose, blind: a fresh agent
-session sees only the Lean. Comparing it with the prose is an easy way to
-audit. It is voluntary, and no signature requires one. When the person wants
-to audit (before signing, or after writing something central), offer:
+session sees only the Lean. It is the person's tool for auditing: they read
+it beside the prose, and judge. It is voluntary, and no signature requires
+one.
+
+**The person reads read-backs first, not you.** Do not read their text, and
+do not give your own verdict on them, unless the person asks you to.
+
+When the person wants to audit (before signing, or after writing something
+central), make the read-backs and serve the page, in the background, because
+it keeps serving until it is stopped:
 
 ```sh
-stemma readback --no-serve --json          # central environments without one
-stemma readback <label> --no-serve --json  # one environment
+stemma readback --json                  # central environments without one
+stemma readback <label> --json          # one environment
+stemma readback --module <Module> --json
 ```
 
-Then the person reads them, beside the prose, with `stemma readback` (it
-serves a local page). When a read-back and the prose disagree, say so.
+Its output lists, for each read-back, its label, its state (`new`, `current`,
+`stale`, `archived`) and its address on the page, never its text. Hand the
+person the page's address (`url`), or the address of one read-back
+(`…/#<label>`), and let them read. On the page they mark read-backs unread,
+read or approved, write short notes, and archive them; signing an environment
+archives its read-back.
+
+Only when the person asks:
+
+- to compare a read-back with the prose, read it with
+  `stemma readback --content <label> --json`; when the two disagree, say how;
+- to look at their notes ("see my notes on `subalgebra`"), read them with
+  `stemma readback --notes [<label>] --json`, then act on them. A note marked
+  `outdated` was written on an earlier read-back, of other Lean.
+
+Never read `.stemma/readbacks/` or `.stemma/reviews.json` directly.

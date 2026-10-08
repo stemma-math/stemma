@@ -541,9 +541,35 @@ A read-back is a voluntary aid to auditing, not part of signing.
   meaning (truncated subtraction, `x / 0 = 0`, junk values).
 - A person asks for read-backs whenever they want: of everything new, of one
   environment, of a whole module.
-- They are read in a local web page that sets each environment's prose beside
-  its read-back. The page only shows them: the person decides whether they
-  agree, and acts through the conversation.
+- **They are for the person, who reads them first.** `stemma readback` makes
+  them and serves a local page; the agent hands over its address. What the
+  command says to agents (`--json`) is each read-back's label, its state and
+  its address on the page, never its text. The text is given only on explicit
+  request (`stemma readback --content [<label>…]`), when the person asks the
+  agent to compare a read-back with the prose.
+- A read-back is **new** (made by this run), **current** (made of the
+  environment's Lean as it is now), **stale** (made of Lean that has changed
+  since, or of an environment that is gone) or **archived**.
+- **The page** sets each read-back beside its environment's prose and Lean.
+  It has an index, groups read-backs by module in the order of the table of
+  contents, filters them (unread, approved, stale, archived), and gives each
+  one a stable anchor, `…/#<label>`, that other tools can link to.
+- **Review marks.** On the page, the person marks each read-back unread, read
+  or approved, and may write a short note on it. Marks are the person's own
+  record of their review, nothing more: they live in `.stemma/reviews.json`,
+  one file per person and per clone, never committed nor signed. Each mark
+  records the formal fingerprint of the read-back it was made on, so that a
+  mark on an earlier read-back shows as outdated. The agent reads notes only
+  when the person asks (`stemma readback --notes [<label>…]`).
+- **Archiving.** When `stemma sign` signs an environment whose read-back was
+  made of the Lean being signed, that read-back is archived. The person can
+  also archive and unarchive read-backs on the page. Archived read-backs are
+  hidden unless the page is asked to show them; a read-back made of other Lean
+  is not archived.
+- The page writes marks through the local server that serves it, which
+  listens only on 127.0.0.1, answers only requests addressed to itself, and
+  accepts a write only with a random token that the page it served carries.
+  It writes nowhere but `.stemma/reviews.json`.
 - Read-backs are kept in `.stemma/`. They are not committed, and no signature
   requires one.
 
@@ -712,7 +738,7 @@ The first forge Stemma supports is GitHub:
 | `stemma verify` | Whether a change carries the signatures and approvals it needs, from git alone |
 | `stemma sign` | Signs environments and approves changes, in an interactive terminal; `stemma sign <labels…>` only those |
 | `stemma key add` | Registers the key a member signs with, on a branch, for a maintainer to approve |
-| `stemma readback` | Makes read-backs and shows them in a local web page |
+| `stemma readback` | Makes read-backs and serves a local page for a person to read and mark them |
 | `stemma claude`, `stemma codex` | Start an equipped agent |
 
 Every command has a `--json` output for agents.
