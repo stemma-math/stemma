@@ -118,6 +118,9 @@ stemma = "0.3.0"            # the stemma version, which fixes Lean, Verso and Ma
 [members]
 alice = { roles = ["maintainer", "signer"], keys = ["ssh-ed25519 AAAA…"] }
 
+[policy]
+require_signed_central = true   # every central environment is signed (§3)
+
 [policy.review]             # optional (§4)
 ```
 
@@ -127,6 +130,11 @@ alice = { roles = ["maintainer", "signer"], keys = ["ssh-ed25519 AAAA…"] }
 - `stemma init` makes the person who creates the library its first member, as
   maintainer and signer, with the key git signs with, so that someone can
   approve the changes the policy reserves to maintainers.
+- A member registers their key with `stemma key add` (§3, "Who signs").
+- `require_signed_central` says whether every central environment must carry a
+  current signature (§3). It is on unless the group turns it off: `stemma
+  init` writes it, and so does `stemma upgrade` in libraries made before it
+  existed. Like the rest of the policy, it is read from `main`.
 
 ### Not committed
 
@@ -328,8 +336,18 @@ statement is approved, and its proof is not finished.
 
 ### What needs a signature
 
-The shared branch never holds a stale environment: a change that would leave
-one stale is not integrated until it carries the new signatures (§4). These
+On the shared branch, **every central environment is signed**: central means
+signed by a person. `stemma check` fails while a central environment is
+unsigned or stale, saying which and why, so a change is not integrated until
+it carries the signatures it needs (§4). This covers every central environment
+of the branch, not only those the change adds: one that reached `main`
+unsigned (before this rule, or while the group had turned it off) blocks every
+change until someone signs it, and `stemma status` lists it. A group can turn
+the rule off (`require_signed_central = false`, §1), in a change of the
+policy; then new central environments enter unsigned, and only stale ones
+block.
+
+Whatever the policy, the shared branch never holds a stale environment. These
 changes need a signature:
 
 - changing the prose or the formal meaning of a signed environment, including
@@ -342,16 +360,42 @@ A signature that applies to no central environment any more (because the
 environment was removed, made not central, or relabelled) must be withdrawn by
 a signer, with `stemma sign`, in the same change.
 
-Everything else goes in without one: new central environments (unsigned
-until someone signs them), proofs of signed statements, dark work outside
-every signed closure, prose outside environments, and environments that are
-not central.
+Everything else goes in without one: proofs of signed statements, dark work
+outside every signed closure, prose outside environments, and environments
+that are not central. New central environments need one under the default
+policy, as above.
+
+### What a branch brings
+
+`stemma sign` and `stemma share` tell what a branch brings from what others
+left pending, deterministically, from git and the report alone (no text is
+parsed, and `main` is not built):
+
+- an environment **belongs to the branch** when the lines it spans (the report
+  records where each environment starts and ends) intersect what the branch
+  changes since it forked from `main` (`git diff main...`, up to the working
+  tree, which is what the report is built from), or when its module is new on
+  the branch. Renames count as a removal and an addition, so an environment
+  moved to another module belongs to the branch that moved it; bringing `main`
+  in moves the fork point, so what `main` brought does not;
+- an environment is **new** on the branch when all its lines are;
+- an environment pending that does not belong to the branch is labelled with
+  who last touched it: the author of the most recent commit among those that
+  wrote its lines (`git blame`), and the agent its `Agent:` trailer names.
 
 ### Who signs
 
 - Any member with the `signer` role may sign, including the person who
   directed the change: a signature guarantees that a person checked the
   correspondence.
+- A member signs with a key listed for them in `stemma.toml` on `main`. They
+  register it with `stemma key add [--key <path>]`, which takes the key git
+  signs with (`user.signingkey`) by default and adds it to their entry, on a
+  branch, never on `main`. It is a change of the policy, so a maintainer whose
+  key is already on `main` approves it (§4): nobody approves their own first
+  key. A key dedicated to signing is recommended. `stemma status` and `stemma
+  verify` warn about members with the `signer` or `maintainer` role and no
+  key.
 - A signature records the member who signed, and, when there was one, which
   agent proposed the change (from the commit trailers).
 
@@ -363,11 +407,23 @@ but to make sure that neither an agent's shortcut nor a person's offhand
 "sign it for me" can produce a signature.
 
 - A signer runs `stemma sign` in their own terminal. It shows what awaits
-  them, grouped by cause: for each environment, its prose, its Lean statement
-  and what changed since its last signature; and the changes on the branch
-  that need their approval (§4). They confirm each group explicitly.
+  them in two sections: what this branch brings (§3, "What a branch brings"),
+  and what others left pending, each with who last touched it. For each
+  environment it shows its label and name, whether it is new or what changed
+  since its last signature, its prose and its Lean statement (for a statement,
+  without its proof), where it is, and a link to its read-back when there is
+  one; when they are too long, only where to read them. The signer chooses
+  item by item: this branch's are chosen at first, others' are not.
+- `stemma sign <labels…>` shows only those environments, all chosen at first.
+- The changes on the branch that need their approval (§4), and the signatures
+  to withdraw, are shown apart from signatures, and confirmed explicitly.
 - `stemma sign` writes the files in `signatures/` and records the approvals in
-  one commit, signed with the person's key.
+  one commit, signed with the person's key, and says what is still missing,
+  label by label. One signing session makes one commit.
+- When the signing key belongs to no member, `stemma sign` offers to register
+  it (as `stemma key add` does) and stops: registering a key and signing are
+  separate acts, and the key counts only once a maintainer has approved it on
+  `main`.
 - Three barriers keep agents out:
   1. `stemma sign` runs only in an interactive terminal, which agents' shell
      tools are not;
@@ -463,6 +519,9 @@ checks.
   `stemma sign` first, so that the checks do not fail for it. What only
   someone else can give is reported once the pull request is open.
 - Sharing from `main` moves the work to a working branch first.
+- Sharing says how many definitions and statements the branch adds (§3, "What
+  a branch brings"), and how many of them are central, so that the person sees
+  what they are about to claim.
 - `stemma status` says how far a branch is from `main`, as information. It
   never forces a synchronization.
 - When part of a branch needs a signature and part does not, the agent offers
@@ -480,8 +539,11 @@ checks.
 | On every push | The forge, at once | Protected files and layout |
 | On a pull request | Required checks | Everything, on `main` with the pull request applied: the build, the rules of this specification, and signatures. This is what guarantees |
 
-A pull request that would leave a signed environment stale says which
-signatures it needs, and is not merged until they are added to it.
+A pull request that would leave a central environment unsigned (under the
+default policy) or a signed one stale says which signatures it needs, label by
+label, and is not merged until they are added to it. `stemma check` reports
+them as problems; `stemma verify` says which are missing and establishes,
+with git, who signed.
 
 ### Approvals
 
@@ -499,7 +561,8 @@ policy       = ["maintainer"]   # stemma.toml, .github/
   other way a change gets a kind.
 - A change of the `policy` kind (the members, their keys and roles, the
   policy, the version of `stemma`, the forge's checks) always needs a
-  maintainer's approval, and that cannot be turned off.
+  maintainer's approval, and that cannot be turned off. Registering a key
+  with `stemma key add` is one.
 - A change of the `dependencies` kind needs a maintainer's approval unless the
   group says otherwise (`dependencies = []`): a new dependency is code that
   every member's machine will build and run.
@@ -560,8 +623,13 @@ The first forge Stemma supports is GitHub:
   start it again through `stemma`. `stemma` keeps the block current, and
   `stemma check` fails when it is missing.
 - **Permissions.** The agent may not write the files only `stemma` writes
-  (§1), nor `signatures/`; it may not run `stemma sign`, push to `main` or
-  force a push.
+  (§1), nor `signatures/`; it may not run `stemma sign` or `stemma key`, push
+  to `main` or force a push.
+- **Centrality.** The agent never marks an environment central without the
+  person's permission. Before each sharing, and when it finishes a block of
+  work, it gives the person a short list of candidates for central, with their
+  role in the library, and lets them decide; when the person already marks
+  central environments themselves, it proposes only strong candidates.
 - **Authorship.** The person is the author of every commit. The agent adds a
   trailer naming itself:
 
@@ -585,7 +653,8 @@ The first forge Stemma supports is GitHub:
 | `stemma share` | Brings `main` in, and opens or updates the pull request |
 | `stemma upgrade` | Moves the library to this version of `stemma`: migrations, the files only `stemma` writes, and the dependencies |
 | `stemma verify` | Whether a change carries the signatures and approvals it needs, from git alone |
-| `stemma sign` | Signs environments and approves changes, in an interactive terminal |
+| `stemma sign` | Signs environments and approves changes, in an interactive terminal; `stemma sign <labels…>` only those |
+| `stemma key add` | Registers the key a member signs with, on a branch, for a maintainer to approve |
 | `stemma readback` | Makes read-backs and shows them in a local web page |
 | `stemma claude`, `stemma codex` | Start an equipped agent |
 
