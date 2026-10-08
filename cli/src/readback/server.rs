@@ -9,6 +9,7 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use anyhow::{Result, bail};
@@ -30,6 +31,9 @@ pub(super) struct Server {
     entries: Vec<Entry>,
     port: u16,
     token: String,
+    /// Held while the reviews are read, changed and written, so that two
+    /// writes at once cannot lose a change.
+    writes: Mutex<()>,
 }
 
 /// A request, as much of it as the server needs.
@@ -182,14 +186,21 @@ impl Server {
             entries,
             port,
             token: random_token(),
+            writes: Mutex::new(()),
         }
     }
 
-    /// Answers requests until the process is stopped.
+    /// Answers requests until the process is stopped, each connection on a
+    /// thread of its own, so that an idle connection (a browser's preconnect)
+    /// holds up no other.
     pub(super) fn run(&self, listener: TcpListener) {
-        for stream in listener.incoming().flatten() {
-            let _ = self.handle(stream);
-        }
+        std::thread::scope(|scope| {
+            for stream in listener.incoming().flatten() {
+                scope.spawn(move || {
+                    let _ = self.handle(stream);
+                });
+            }
+        });
     }
 
     fn handle(&self, mut stream: TcpStream) -> Result<()> {
@@ -266,6 +277,7 @@ impl Server {
             return Response::error(404, "no such read-back");
         };
         let formal = &entry.readback.formal;
+        let _write = self.writes.lock().unwrap_or_else(|e| e.into_inner());
         let recorded = Reviews::load(&self.library).and_then(|mut reviews| {
             let review = reviews.apply(&change, formal)?;
             reviews.save(&self.library)?;
@@ -472,6 +484,60 @@ Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
             Reviews::load(&dir).unwrap().get("even-add").note,
             "Is n allowed to be 0?"
         );
+    }
+
+    #[test]
+    fn concurrent_writes_lose_nothing() {
+        let dir = library("concurrent");
+        let mut s = server(&dir);
+        let labels: Vec<String> = (0..16).map(|i| format!("label-{i}")).collect();
+        s.entries = labels
+            .iter()
+            .map(|label| {
+                let mut readback = s.entries[0].readback.clone();
+                readback.label = label.clone();
+                Entry {
+                    readback,
+                    freshness: State::Current,
+                    gone: false,
+                }
+            })
+            .collect();
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        s.port = port;
+        let token = s.token.clone();
+        // An idle connection, as a browser's preconnect, holds up no other.
+        let _idle = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        std::thread::spawn(move || s.run(listener));
+        std::thread::scope(|scope| {
+            for label in &labels {
+                let token = &token;
+                scope.spawn(move || {
+                    let body = json!({ "label": label, "mark": "read" }).to_string();
+                    let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+                    write!(
+                        stream,
+                        "POST /api/review HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\
+X-Stemma-Token: {token}\r\nContent-Type: application/json\r\n\
+Content-Length: {}\r\n\r\n{body}",
+                        body.len()
+                    )
+                    .unwrap();
+                    let mut out = String::new();
+                    stream.read_to_string(&mut out).unwrap();
+                    assert!(out.starts_with("HTTP/1.1 200"), "{out}");
+                });
+            }
+        });
+        let saved = Reviews::load(&dir).unwrap();
+        for label in &labels {
+            assert_eq!(
+                saved.get(label).mark,
+                super::super::reviews::Mark::Read,
+                "{label}"
+            );
+        }
     }
 
     #[test]
