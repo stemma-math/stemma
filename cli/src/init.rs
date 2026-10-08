@@ -8,7 +8,7 @@ use std::process::{Command, Stdio};
 use anyhow::{Context, Result, bail};
 use serde_json::json;
 
-use crate::commands::{LEAN_TOOLCHAIN, STEMMA_GIT, mathlib_rev};
+use crate::commands::{LEAN_TOOLCHAIN, REFERENCES, STEMMA_GIT, mathlib_rev};
 use crate::{agents_md, library, templates, ui};
 
 /// Options of `stemma init`. What is `None` is asked in a terminal, and takes
@@ -282,7 +282,13 @@ pub fn init(options: Options, json_output: bool) -> Result<()> {
     }
     std::fs::write(dir.join("lean-toolchain"), LEAN_TOOLCHAIN)?;
     std::fs::write(dir.join("AGENTS.md"), agents_md::initial(&title))?;
-    written.extend(["lean-toolchain".to_string(), "AGENTS.md".to_string()]);
+    // The library's references, empty: people add its entries.
+    std::fs::write(dir.join(REFERENCES), "")?;
+    written.extend([
+        "lean-toolchain".to_string(),
+        "AGENTS.md".to_string(),
+        REFERENCES.to_string(),
+    ]);
     report(
         interactive && !json_output,
         true,
