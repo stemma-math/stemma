@@ -1,3 +1,32 @@
 # {{ title }}
 
 A [Stemma](https://github.com/stemma-math/stemma) library.
+
+## Working with an agent
+
+Start an agent in the library through `stemma`, which equips it with the
+instructions, skills and permissions this library needs:
+
+```sh
+stemma agent claude      # Claude Code
+stemma agent codex       # Codex
+stemma agent deepseek    # DeepSeek Harness
+stemma agent opencode    # OpenCode
+```
+
+An agent started otherwise notices it, through the block at the top of
+`AGENTS.md`, and asks to be started again. What makes an agent "started
+through `stemma`" is two things, so that a harness `stemma` does not support
+can be equipped by hand:
+
+1. its instructions contain the section titled "Working in a Stemma library":
+   `stemma agent <harness> --dry-run` writes it to
+   `.stemma/agent/equipment/instructions.md`, and the skills to
+   `.stemma/agent/equipment/skills/`; give the harness both;
+2. every command it runs has the environment variable `STEMMA_SESSION` set
+   (to `1`), so that `stemma sign` and `stemma key` refuse to run in it.
+
+Agents never sign, never edit `stemma.toml`, `lakefile.toml`,
+`lake-manifest.json`, `lean-toolchain`, `.gitignore`, `.github/` or
+`signatures/`, and never push to `main`. Configure the harness to deny those
+edits and `stemma sign`, `stemma key` and forced pushes where it can.

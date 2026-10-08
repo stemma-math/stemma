@@ -573,12 +573,20 @@ impl Shared {
             &[],
         );
         assert!(out.status.success(), "{}", stderr(&out));
-        // A fake agent, so that starting one only chooses the branch.
+        // Fake agents, so that starting one only chooses the branch. Each
+        // records the session variable it got, and its arguments.
         let bin = shared.root.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
-        for agent in ["claude", "codex"] {
+        for agent in ["claude", "codex", "dsh", "opencode"] {
             let path = bin.join(agent);
-            std::fs::write(&path, "#!/bin/sh\nexit 0\n").unwrap();
+            std::fs::write(
+                &path,
+                format!(
+                    "#!/bin/sh\necho \"STEMMA_SESSION=$STEMMA_SESSION $*\" > \"{}\"\nexit 0\n",
+                    shared.root.join(format!("{agent}.started")).display()
+                ),
+            )
+            .unwrap();
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
@@ -1790,4 +1798,253 @@ fn upgrade_in_a_terminal_lists_what_it_will_do_and_asks() {
     assert!(ok, "{output}");
     assert!(output.contains("`stemma sign`"), "{output}");
     assert!(read(dir.join("stemma.toml")).contains(env!("CARGO_PKG_VERSION")));
+}
+
+/// `stemma agent <harness> --dry-run` in a new library: what it would run.
+fn dry_run(dir: &Path, harness: &str) -> serde_json::Value {
+    let out = Command::new(env!("CARGO_BIN_EXE_stemma"))
+        .args(["agent", harness, "--dry-run"])
+        .envs(IDENTITY)
+        .env_remove("STEMMA_SESSION")
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    json_of(&out)
+}
+
+#[test]
+fn every_harness_gets_the_equipment_and_the_session_variable() {
+    let dir = scratch("harnesses");
+    let out = stemma(&dir, &["init", ".", "--name", "Alg", "--no-mathlib"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let agent = dir.join(".stemma/agent");
+    let skills = [
+        "stemma-mathematics",
+        "stemma-documents",
+        "stemma-sharing",
+        "stemma-signatures",
+    ];
+
+    // The neutral equipment, for any harness, and to equip one by hand.
+    let claude = dry_run(&dir, "claude");
+    assert!(
+        read(agent.join("equipment/instructions.md")).starts_with("# Working in a Stemma library")
+    );
+    for skill in skills {
+        assert!(
+            agent
+                .join(format!("equipment/skills/{skill}/SKILL.md"))
+                .is_file()
+        );
+    }
+    for harness in ["claude", "codex", "deepseek", "opencode"] {
+        let v = dry_run(&dir, harness);
+        assert_eq!(v["harness"], harness);
+        assert_eq!(v["env"]["STEMMA_SESSION"], "1", "{harness}: {v}");
+    }
+
+    // Claude Code: settings, a plugin with the skills, the instructions.
+    assert_eq!(claude["program"], "claude");
+    let args: Vec<&str> = claude["args"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a.as_str().unwrap())
+        .collect();
+    assert!(args.contains(&"--plugin-dir") && args.contains(&"--append-system-prompt-file"));
+    let settings: serde_json::Value =
+        serde_json::from_str(&read(agent.join("claude/settings.json"))).unwrap();
+    assert!(
+        settings["permissions"]["deny"]
+            .to_string()
+            .contains("Bash(stemma sign:*)")
+    );
+    assert_eq!(settings["env"]["STEMMA_SESSION"], "1");
+    for skill in skills {
+        assert!(
+            agent
+                .join(format!("claude/plugin/skills/{skill}/SKILL.md"))
+                .is_file()
+        );
+    }
+
+    // Codex: the instructions and the skills, inline.
+    let codex = dry_run(&dir, "codex");
+    assert_eq!(codex["program"], "codex");
+    let config = codex["args"][3].as_str().unwrap();
+    assert!(config.starts_with("developer_instructions="));
+    assert!(
+        config.contains("Working in a Stemma library") && config.contains("Saving and sharing")
+    );
+
+    // DeepSeek Harness: a patch layer with the instructions, skills and hooks.
+    let dsh = dry_run(&dir, "deepseek");
+    assert_eq!(dsh["program"], "dsh");
+    assert_eq!(dsh["args"][0], "web");
+    assert_eq!(dsh["args"][1], "--patch");
+    let patch_path = PathBuf::from(dsh["args"][2].as_str().unwrap());
+    let patch = read(patch_path.clone());
+    let patch: serde_json::Value =
+        serde_json::from_str(&patch[patch.find('[').unwrap()..]).unwrap();
+    let home = PathBuf::from(patch[0]["config"]["dshHome"].as_str().unwrap());
+    assert!(read(home.join("AGENTS.md")).starts_with("# Working in a Stemma library"));
+    let skills_dir = PathBuf::from(patch[1]["config"]["customSkillDirs"][0].as_str().unwrap());
+    for skill in skills {
+        assert!(skills_dir.join(skill).join("SKILL.md").is_file());
+    }
+    let hooks: serde_json::Value = serde_json::from_str(&read(PathBuf::from(
+        patch[2]["insert"][0]["config"]["configPath"]
+            .as_str()
+            .unwrap(),
+    )))
+    .unwrap();
+    assert!(
+        hooks["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+            .as_str()
+            .unwrap()
+            .ends_with("hook pre-tool-use")
+    );
+    let out = Command::new(env!("CARGO_BIN_EXE_stemma"))
+        .args(["agent", "deepseek", "--dry-run", "--", "--profile", "tui"])
+        .envs(IDENTITY)
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    let v = json_of(&out);
+    assert_eq!(
+        v["args"],
+        serde_json::json!(["--patch", patch_path, "--profile", "tui"])
+    );
+
+    // OpenCode: its configuration, inline, with the instructions and the
+    // session's summary, the skills, and permissions.
+    let opencode = dry_run(&dir, "opencode");
+    assert_eq!(opencode["program"], "opencode");
+    let config: serde_json::Value =
+        serde_json::from_str(opencode["env"]["OPENCODE_CONFIG_CONTENT"].as_str().unwrap()).unwrap();
+    let instructions = read(PathBuf::from(config["instructions"][0].as_str().unwrap()));
+    assert!(instructions.starts_with("# Working in a Stemma library"));
+    assert!(instructions.contains("This session is equipped by stemma"));
+    let skills_dir = PathBuf::from(config["skills"]["paths"][0].as_str().unwrap());
+    for skill in skills {
+        assert!(skills_dir.join(skill).join("SKILL.md").is_file());
+    }
+    assert_eq!(config["permission"]["edit"]["signatures/*"], "deny");
+    assert_eq!(config["permission"]["bash"]["stemma sign *"], "deny");
+}
+
+#[test]
+fn harnesses_start_in_the_session_with_their_arguments() {
+    let s = Shared::new("harness-start");
+    git(&s.lib, &["switch", "--quiet", "--create", "work/alice"]);
+    for (harness, program) in [
+        ("deepseek", "dsh"),
+        ("opencode", "opencode"),
+        ("codex", "codex"),
+    ] {
+        let out = s.stemma(&s.lib, &["agent", harness, "--here", "--", "--extra"], &[]);
+        assert!(out.status.success(), "{}", stderr(&out));
+        let started = read(s.root.join(format!("{program}.started")));
+        assert!(started.starts_with("STEMMA_SESSION=1 "), "{started}");
+        assert!(started.trim_end().ends_with("--extra"), "{started}");
+    }
+    // The shortcuts start the same harnesses.
+    assert!(
+        s.stemma(&s.lib, &["claude", "--here"], &[])
+            .status
+            .success()
+    );
+    assert!(read(s.root.join("claude.started")).contains("--plugin-dir"));
+}
+
+/// `stemma hook <event>` in `dir`, with `input` on stdin.
+fn hook(dir: &Path, args: &[&str], input: &str) -> String {
+    use std::io::Write;
+    let mut child = Command::new(env!("CARGO_BIN_EXE_stemma"))
+        .args(args)
+        .envs(IDENTITY)
+        .current_dir(dir)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success());
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+#[test]
+fn hooks_give_the_summary_and_deny_protected_files_and_signing() {
+    let dir = scratch("hooks");
+    let out = stemma(&dir, &["init", ".", "--name", "Alg", "--no-mathlib"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let cwd = dir.display().to_string();
+    let call = |tool: &str, input: serde_json::Value| {
+        let call = serde_json::json!({ "tool_name": tool, "tool_input": input, "cwd": cwd });
+        hook(&dir, &["hook", "pre-tool-use"], &call.to_string())
+    };
+    let denied = |out: String| {
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["hookSpecificOutput"]["permissionDecision"], "deny", "{v}");
+    };
+    denied(call(
+        "write",
+        serde_json::json!({ "file_path": "stemma.toml", "content": "" }),
+    ));
+    denied(call(
+        "Edit",
+        serde_json::json!({ "file_path": format!("{cwd}/signatures/even.toml") }),
+    ));
+    denied(call(
+        "str_replace_editor",
+        serde_json::json!({ "command": "create", "path": ".github/x.yml" }),
+    ));
+    denied(call(
+        "bash",
+        serde_json::json!({ "command": "cd . && stemma sign even" }),
+    ));
+    denied(call(
+        "Bash",
+        serde_json::json!({ "command": "git push --force-with-lease" }),
+    ));
+    assert_eq!(
+        call("write", serde_json::json!({ "file_path": "Alg/Even.lean" })),
+        ""
+    );
+    assert_eq!(
+        call(
+            "str_replace_editor",
+            serde_json::json!({ "command": "view", "path": "stemma.toml" })
+        ),
+        ""
+    );
+    assert_eq!(
+        call(
+            "bash",
+            serde_json::json!({ "command": "stemma check --json" })
+        ),
+        ""
+    );
+    assert_eq!(
+        call("read", serde_json::json!({ "file_path": "stemma.toml" })),
+        ""
+    );
+
+    let plain = hook(&dir, &["hook", "session-start"], "");
+    assert!(plain.starts_with("This session is equipped by stemma"));
+    let v: serde_json::Value =
+        serde_json::from_str(&hook(&dir, &["--json", "hook", "session-start"], "")).unwrap();
+    assert_eq!(v["hookSpecificOutput"]["hookEventName"], "SessionStart");
+    assert!(
+        v["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap()
+            .contains("equipped by stemma")
+    );
 }

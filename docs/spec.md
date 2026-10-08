@@ -126,7 +126,7 @@ that file shows the marks and no state.
 
 The rules, skills and permissions agents work with belong to the version of
 `stemma` the library uses, which loads them when it starts an agent
-(`stemma claude`, `stemma codex`). `AGENTS.md` holds the group's own
+(`stemma agent <harness>`). `AGENTS.md` holds the group's own
 instructions, and a block that `stemma` keeps at its top so that an agent
 started without `stemma` notices it (§5).
 
@@ -584,7 +584,7 @@ checks.
 - Each person works on branches of their own: `work/<person>` by default, or
   `work/<person>-<topic>` for a separate piece of work. A working branch is
   never `work/<person>/<topic>`: git cannot hold `work/<person>` beside it.
-- Starting an agent (`stemma claude`, `stemma codex`) asks which branch to
+- Starting an agent (`stemma agent <harness>`) asks which branch to
   work on: the current branch first (unless it is `main`), then the person's
   other working branches with their state (commits ahead of `main`, an open or
   merged pull request, uncommitted changes), then a new branch. It never
@@ -755,23 +755,57 @@ The first forge Stemma supports is GitHub:
 
 ## 5. Agents
 
-- `stemma claude` and `stemma codex` start the agent in the library with the
-  instructions, skills and permissions of the library's `stemma` version. They
-  synchronize nothing.
+- `stemma agent <harness>` starts an agent harness in the library with the
+  instructions, skills and permissions of the library's `stemma` version.
+  It synchronizes nothing. The harnesses are Claude Code (`claude`), Codex
+  (`codex`), DeepSeek Harness (`deepseek`) and OpenCode (`opencode`);
+  `stemma claude` and `stemma codex` are shortcuts.
+- **The equipment is neutral.** It is written once: the system instructions,
+  the skills, the summary a session starts with, the files only `stemma`
+  writes and the commands an agent may not run. Each harness gets a thin
+  adapter that installs it the way that harness reads it, in
+  `.stemma/agent/<harness>/`, written anew at each start; the neutral form is
+  in `.stemma/agent/equipment/` (`instructions.md`, and `skills/<name>/SKILL.md`).
 - **When a session starts**, the agent gets a short summary that costs no
   build: the branch, uncommitted changes, and work not yet in `main`. Claude
-  Code gets it from a hook passed when `stemma` starts it, so it is given
-  again when a session resumes; Codex, which runs hooks only once a person
-  trusts them, gets it in its instructions.
+  Code and DeepSeek Harness get it from a hook passed when `stemma` starts
+  them, so it is given again when a session resumes; Codex, which runs hooks
+  only once a person trusts them, and OpenCode, which has no such hook, get it
+  in their instructions, as it was when `stemma` started them.
+- **What makes an agent started through `stemma`** is two things, which a
+  person can also give a harness `stemma` does not support:
+  1. its instructions contain the section titled "Working in a Stemma
+     library": the text of `.stemma/agent/equipment/instructions.md`
+     (`stemma agent <harness> --dry-run` writes it), with the skills of
+     `.stemma/agent/equipment/skills/` available to it, or appended;
+  2. every process it runs has the environment variable `STEMMA_SESSION`
+     set, under which `stemma sign` and `stemma key` refuse to run and no
+     command asks questions.
 - **Agents started without `stemma`** notice it. `AGENTS.md`, which every
   agent reads, begins with a block `stemma` writes: an equipped agent's
   instructions contain the section that block names, and an agent whose
   instructions do not must tell the person, before doing anything else, to
-  start it again through `stemma`. `stemma` keeps the block current, and
-  `stemma check` fails when it is missing.
+  start it again with `stemma agent <harness>`. `stemma` keeps the block
+  current, and `stemma check` fails when it is missing.
 - **Permissions.** The agent may not write the files only `stemma` writes
   (§1), nor `signatures/`; it may not run `stemma sign` or `stemma key`, push
-  to `main` or force a push.
+  to `main` or force a push. Its instructions say so to every harness, and
+  `STEMMA_SESSION` keeps `stemma sign` and `stemma key` from running under
+  every harness. Beyond that, each harness enforces what it can:
+
+  | Harness | Protected files | Forbidden commands |
+  |---|---|---|
+  | Claude Code | Denied by its permission rules (`Edit(…)`), and by a `PreToolUse` hook | Denied by its permission rules (`Bash(…)`), and by the hook |
+  | DeepSeek Harness | Denied by a `PreToolUse` hook, run through its bridge for Claude Code hooks, for its file tools (`write`, `edit`, `str_replace_editor`) | Denied by the same hook, for its `bash` tool |
+  | OpenCode | Denied by its `edit` permission, which covers every tool that writes files | Denied by its `bash` permission |
+  | Codex | Not enforced: its sandbox (`workspace-write`) has no rules for single files | Not enforced: `stemma` gives Codex no command rules |
+
+  None of them stops a shell command that writes a protected file (`echo >
+  stemma.toml`), and the command rules match commands by their text: they
+  guard against shortcuts, not against an agent set on evading them. What
+  guarantees is elsewhere: `stemma verify` accepts signatures only in commits
+  signed with a signer's key (§3), and changes to the files only `stemma`
+  writes need a maintainer's approval (§4).
 - **Centrality.** The agent never marks an environment central without the
   person's permission. Before each sharing, and when it finishes a block of
   work, it gives the person a short list of candidates for central, with their
@@ -804,7 +838,7 @@ The first forge Stemma supports is GitHub:
 | `stemma sign` | Signs environments and approves changes, in an interactive terminal; `stemma sign <labels…>` only those |
 | `stemma key add` | Registers the key a member signs with, on a branch, for a maintainer to approve |
 | `stemma readback` | Makes read-backs and serves a local page for a person to read and mark them |
-| `stemma claude`, `stemma codex` | Start an equipped agent |
+| `stemma agent <harness>` | Starts an equipped agent harness: `claude`, `codex`, `deepseek` or `opencode` (`stemma claude` and `stemma codex` are shortcuts) |
 
 Every command has a `--json` output for agents.
 

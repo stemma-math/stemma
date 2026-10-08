@@ -422,10 +422,12 @@ pub fn init(options: Options, json_output: bool) -> Result<()> {
         );
     } else {
         let next = if dir == Path::new(".") {
-            "Next: `stemma claude/codex` to start working.".to_string()
+            "Next: `stemma agent <harness>` (claude, codex, deepseek or opencode) to start working."
+                .to_string()
         } else {
             format!(
-                "Next: cd {} and `stemma claude/codex` to start working.",
+                "Next: cd {} and `stemma agent <harness>` (claude, codex, deepseek or opencode) \
+                 to start working.",
                 dir.display()
             )
         };

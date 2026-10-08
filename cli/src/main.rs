@@ -228,12 +228,21 @@ enum Commands {
     /// Hooks agents run; not meant to be called by hand.
     #[command(hide = true)]
     Hook {
-        /// The event: `session-start`.
+        /// The event: `session-start` or `pre-tool-use`.
         event: String,
     },
-    /// Start Claude Code, equipped to work in the library.
+    /// Start an agent harness, equipped to work in the library: claude,
+    /// codex, deepseek or opencode.
+    Agent {
+        /// The harness.
+        #[arg(value_enum)]
+        harness: agent::Harness,
+        #[command(flatten)]
+        args: AgentArgs,
+    },
+    /// Start Claude Code, equipped to work in the library (`stemma agent claude`).
     Claude(AgentArgs),
-    /// Start Codex, equipped to work in the library.
+    /// Start Codex, equipped to work in the library (`stemma agent codex`).
     Codex(AgentArgs),
 }
 
@@ -278,31 +287,24 @@ struct AgentArgs {
     args: Vec<String>,
 }
 
-/// Runs a hook for an agent: prints what the agent should know.
-fn hook(event: &str) -> anyhow::Result<bool> {
-    match event {
-        "session-start" => {
-            let library = library::Library::find(std::path::Path::new("."))?;
-            println!("{}", agent::session_summary(&library));
-            Ok(true)
-        }
-        other => anyhow::bail!("unknown hook event '{other}'"),
-    }
-}
-
 /// Starts an agent, or prints how it would be started.
-fn start(agent: agent::Agent, args: AgentArgs, json: bool) -> anyhow::Result<bool> {
+fn start(harness: agent::Harness, args: AgentArgs, json: bool) -> anyhow::Result<bool> {
     let request = branches::Request {
         branch: args.branch,
         here: args.here,
         delete_merged: args.delete_merged,
     };
     let mode = interact::Mode::detect(json, args.yes);
-    let launch = agent::prepare(agent, args.args, args.dry_run, &request, mode)?;
+    let launch = agent::prepare(harness, args.args, args.dry_run, &request, mode)?;
     if args.dry_run {
+        let env: serde_json::Map<String, serde_json::Value> = launch
+            .env
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone().into()))
+            .collect();
         let value = serde_json::json!({
-            "program": launch.program, "args": launch.args,
-            "dir": launch.dir, "branch": launch.branch,
+            "harness": harness.name(), "program": launch.program, "args": launch.args,
+            "env": env, "dir": launch.dir, "branch": launch.branch,
         });
         println!("{}", serde_json::to_string_pretty(&value)?);
         return Ok(true);
@@ -450,9 +452,10 @@ fn main() -> ExitCode {
             cli.json,
         ),
         Commands::Remote { url, unset } => branches::remote_command(url, unset, cli.json),
-        Commands::Hook { event } => hook(&event),
-        Commands::Claude(args) => start(agent::Agent::Claude, args, cli.json),
-        Commands::Codex(args) => start(agent::Agent::Codex, args, cli.json),
+        Commands::Hook { event } => agent::hook(&event, cli.json),
+        Commands::Agent { harness, args } => start(harness, args, cli.json),
+        Commands::Claude(args) => start(agent::Harness::Claude, args, cli.json),
+        Commands::Codex(args) => start(agent::Harness::Codex, args, cli.json),
     };
     match result {
         Ok(true) => ExitCode::SUCCESS,

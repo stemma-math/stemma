@@ -9,7 +9,7 @@ use clap::builder::styling::{AnsiColor, Effects, Styles};
 /// The commands, by what they are for, in the order the help shows them.
 pub const SECTIONS: &[(&str, &[&str])] = &[
     ("Start", &["init", "new"]),
-    ("Work with an agent", &["claude", "codex"]),
+    ("Work with an agent", &["agent", "claude", "codex"]),
     (
         "See where you are",
         &["status", "check", "preview", "readback"],

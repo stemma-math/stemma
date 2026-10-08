@@ -126,8 +126,8 @@ fn disk_diagnostics(library: &Library) -> Result<Vec<String>> {
     }
     if !crate::agents_md::is_current(&library.dir) {
         out.push(
-            "AGENTS.md lacks the current block stemma keeps in it; `stemma claude` or \
-             `stemma codex` writes it."
+            "AGENTS.md lacks the current block stemma keeps in it; `stemma agent <harness>` \
+             or `stemma upgrade` writes it."
                 .into(),
         );
     }
