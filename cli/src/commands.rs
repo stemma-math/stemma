@@ -15,6 +15,9 @@ use crate::ui;
 /// The Lean toolchain this version of Stemma works with.
 pub const LEAN_TOOLCHAIN: &str = include_str!("../../lean/lean-toolchain");
 
+/// The base changes are judged against, unless a command is told otherwise.
+pub const DEFAULT_BASE: &str = "origin/main";
+
 /// Where Stemma's Lean package is published.
 pub const STEMMA_GIT: &str = "https://github.com/stemma-math/stemma";
 
@@ -161,7 +164,11 @@ pub fn show_build_errors(output: &str) {
 
 /// The outcome of every check of the specification.
 pub struct Checks {
+    /// Every problem but the signatures the policy requires.
     pub problems: Vec<String>,
+    /// Central environments without a current signature, when the policy
+    /// requires one: what a signer can supply, said label by label.
+    pub signatures: Vec<String>,
     /// Lake's errors, when the library does not build.
     pub build: Option<String>,
     /// The library's report, when it builds.
@@ -170,12 +177,57 @@ pub struct Checks {
 
 impl Checks {
     pub fn ok(&self) -> bool {
+        self.ok_but_signatures() && self.signatures.is_empty()
+    }
+
+    /// Whether every check passes but, perhaps, the signatures the policy
+    /// requires.
+    pub fn ok_but_signatures(&self) -> bool {
         self.problems.is_empty() && self.build.is_none()
+    }
+
+    /// Every problem, the missing signatures included.
+    pub fn all_problems(&self) -> Vec<String> {
+        self.problems
+            .iter()
+            .chain(&self.signatures)
+            .cloned()
+            .collect()
     }
 }
 
-/// Runs every check of the specification on a library.
-pub fn run_checks(library: &Library, json_output: bool) -> Result<Checks> {
+/// The central environments of a report that lack a current signature, with
+/// their state, as problems.
+pub fn required_signatures(library: &Library, report: &Report) -> Vec<String> {
+    let mut out = Vec::new();
+    for env in &report.environments {
+        let label = env.record.label.as_deref().unwrap_or_default();
+        let at = format!("{}:{}", env.record.module, env.record.line);
+        match env.signature(&library.dir) {
+            Some(Signature::Unsigned) if env.fingerprints.is_none() => {
+                out.push(format!(
+                    "{at}: {}",
+                    crate::verify::unformalized_central(label)
+                ));
+            }
+            Some(Signature::Unsigned) => out.push(format!(
+                "{at}: '{label}' is central and unsigned: the policy requires a signature \
+                 (`stemma sign`, by a signer)."
+            )),
+            Some(Signature::Stale) => out.push(format!(
+                "{at}: '{label}' is central and its signature is stale: the policy requires a \
+                 current one (`stemma sign`, by a signer)."
+            )),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Runs every check of the specification on a library. The policy is read
+/// from `base` when it has one, so that a change cannot turn it off for
+/// itself.
+pub fn run_checks(library: &Library, base: &str, json_output: bool) -> Result<Checks> {
     let mut problems = disk_diagnostics(library)?;
     let version = env!("CARGO_PKG_VERSION");
     let pinned = &library.config.library.stemma;
@@ -190,6 +242,7 @@ pub fn run_checks(library: &Library, json_output: bool) -> Result<Checks> {
             "The library uses stemma {pinned}, but this is stemma {version}: {fix}."
         ));
     }
+    let mut signatures = Vec::new();
     let (build, report) = match build_and_extract(library, json_output)? {
         Ok(report) => {
             for d in &report.diagnostics {
@@ -199,6 +252,12 @@ pub fn run_checks(library: &Library, json_output: bool) -> Result<Checks> {
                     _ => d.message.clone(),
                 });
             }
+            if crate::config::Config::judging(&library.dir, base)?
+                .policy
+                .require_signed_central
+            {
+                signatures = required_signatures(library, &report);
+            }
             (None, Some(report))
         }
         Err(output) => (Some(output), None),
@@ -206,6 +265,7 @@ pub fn run_checks(library: &Library, json_output: bool) -> Result<Checks> {
     problems.dedup();
     Ok(Checks {
         problems,
+        signatures,
         build,
         report,
     })
@@ -214,10 +274,9 @@ pub fn run_checks(library: &Library, json_output: bool) -> Result<Checks> {
 /// `stemma check`: every check of the specification. Fails when one does.
 pub fn check(json_output: bool) -> Result<bool> {
     let library = Library::find(Path::new("."))?;
-    let Checks {
-        problems, build, ..
-    } = run_checks(&library, json_output)?;
-    let build_errors = build;
+    let checks = run_checks(&library, DEFAULT_BASE, json_output)?;
+    let problems = checks.all_problems();
+    let build_errors = checks.build;
     let ok = problems.is_empty() && build_errors.is_none();
     emit(
         json_output,
@@ -252,6 +311,22 @@ pub fn status(json_output: bool) -> Result<bool> {
         .iter()
         .map(|e| e.signature(&library.dir))
         .collect();
+    // What still lacks a signature, label by label, and whether the policy
+    // (of the base, as `stemma check` reads it) requires it now.
+    let config = crate::config::Config::judging(&library.dir, DEFAULT_BASE)?;
+    let required = config.policy.require_signed_central;
+    let awaiting: Vec<(&str, Signature)> = report
+        .environments
+        .iter()
+        .zip(&signatures)
+        .filter_map(|(e, s)| match s {
+            Some(state @ (Signature::Unsigned | Signature::Stale)) => {
+                Some((e.record.label.as_deref().unwrap_or_default(), *state))
+            }
+            _ => None,
+        })
+        .collect();
+    let warnings = crate::verify::keyless_warnings(&config);
     if json_output {
         let environments: Vec<_> = report
             .environments
@@ -265,7 +340,19 @@ pub fn status(json_output: bool) -> Result<bool> {
                 })
             })
             .collect();
-        let value = json!({ "environments": environments, "diagnostics": report.diagnostics });
+        let awaiting: Vec<_> = awaiting
+            .iter()
+            .map(|(label, state)| {
+                json!({
+                    "label": label, "signature": state,
+                    "required": required || *state == Signature::Stale,
+                })
+            })
+            .collect();
+        let value = json!({
+            "environments": environments, "awaiting_signature": awaiting,
+            "warnings": warnings, "diagnostics": report.diagnostics,
+        });
         println!("{}", serde_json::to_string_pretty(&value)?);
         return Ok(true);
     }
@@ -329,6 +416,26 @@ pub fn status(json_output: bool) -> Result<bool> {
                 ui::dim(format!("{central:<8}"))
             );
         }
+    }
+    if !awaiting.is_empty() {
+        println!();
+        let heading = if required {
+            "Awaiting a signature (`stemma check` fails until a signer signs them)"
+        } else {
+            "Awaiting a signature"
+        };
+        println!("{}", ui::bold(heading));
+        let width = awaiting.iter().map(|(l, _)| l.len()).max().unwrap_or(0);
+        for (label, state) in &awaiting {
+            let state = match state {
+                Signature::Stale => "stale",
+                _ => "unsigned",
+            };
+            println!("  {label:<width$}  {}", ui::state(state, 0));
+        }
+    }
+    for w in &warnings {
+        ui::warning(w);
     }
     for d in &report.diagnostics {
         ui::error(&d.message);

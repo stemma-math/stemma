@@ -3,6 +3,7 @@
 mod agent;
 mod agents_md;
 mod branches;
+mod card;
 mod commands;
 mod config;
 mod help;
@@ -12,6 +13,7 @@ mod lake;
 mod library;
 mod readback;
 mod report;
+mod scope;
 mod share;
 mod sign;
 mod site;
@@ -149,6 +151,11 @@ enum Commands {
         #[arg(long)]
         no_commit: bool,
     },
+    /// Register the key you sign with, in a change a maintainer approves.
+    Key {
+        #[command(subcommand)]
+        action: KeyAction,
+    },
     /// Check that a change carries the signatures and approvals it needs.
     Verify {
         /// The base the change is compared with. By default, `origin/main`.
@@ -180,6 +187,23 @@ enum Commands {
     Claude(AgentArgs),
     /// Start Codex, equipped to work in the library.
     Codex(AgentArgs),
+}
+
+#[derive(Subcommand)]
+enum KeyAction {
+    /// Add your signing key to your entry in stemma.toml, on a branch.
+    Add {
+        /// The public key to add. By default, the one git signs with
+        /// (`user.signingkey`).
+        #[arg(long)]
+        key: Option<PathBuf>,
+        /// The member the key is for. By default, you.
+        #[arg(long)]
+        member: Option<String>,
+        /// Do not commit the change.
+        #[arg(long)]
+        no_commit: bool,
+    },
 }
 
 #[derive(clap::Args)]
@@ -305,6 +329,14 @@ fn main() -> ExitCode {
             base,
             no_commit,
         } => sign::sign(labels, base, !no_commit),
+        Commands::Key {
+            action:
+                KeyAction::Add {
+                    key,
+                    member,
+                    no_commit,
+                },
+        } => keys::key_add(key, member, !no_commit, cli.json),
         Commands::Verify { base, no_build } => verify::verify(base, !no_build, cli.json),
         Commands::Upgrade {
             dry_run,
