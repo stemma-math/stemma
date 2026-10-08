@@ -1,8 +1,15 @@
 {% raw -%}
-# Written by `stemma init`. The checks a pull request must pass to be merged:
-# `stemma check` (the specification) and `stemma verify` (signatures and
-# approvals, checked against the members' keys in stemma.toml on main). Both
-# read only the repository: nothing here depends on the forge.
+# Written by `stemma`; `stemma upgrade` writes it again. The checks a pull
+# request must pass to be merged are its two jobs, both required:
+#
+# - `Stemma verify`: signatures and approvals, checked against the members'
+#   keys in stemma.toml on main. It builds nothing, so it answers in a minute.
+# - `Stemma check`: the build and every rule of the specification.
+#
+# Both read only the repository: nothing here depends on the forge's secrets.
+# Pull requests restore what main built (the dependencies, Mathlib among
+# them, and the library's own build), and only main saves it, so that pull
+# requests never evict main's caches.
 name: Stemma
 
 on:
@@ -15,16 +22,34 @@ permissions:
 
 concurrency:
   group: stemma-${{ github.ref }}
-  cancel-in-progress: true
+  # A run on main always finishes, so that it saves its caches.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  stemma:
-    name: Stemma
+  verify:
+    name: Stemma verify
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
         with:
           # `stemma verify` reads the commits of the change and of main.
+          fetch-depth: 0
+      - name: Install stemma
+        run: |
+          version=$(sed -n 's/^stemma = "\(.*\)"$/\1/p' stemma.toml)
+          name="stemma-$version-x86_64-unknown-linux-musl"
+          curl -sSfL "https://github.com/stemma-math/stemma/releases/download/v$version/$name.tar.gz" | tar xz
+          echo "$PWD/$name" >> "$GITHUB_PATH"
+      - name: Verify
+        run: stemma verify --no-build
+
+  check:
+    name: Stemma check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # `stemma check` reads the policy from main.
           fetch-depth: 0
       - name: Install elan
         run: |
@@ -37,19 +62,88 @@ jobs:
           name="stemma-$version-x86_64-unknown-linux-musl"
           curl -sSfL "https://github.com/stemma-math/stemma/releases/download/v$version/$name.tar.gz" | tar xz
           echo "$PWD/$name" >> "$GITHUB_PATH"
-      - name: Cache Lake's packages and builds
-        uses: actions/cache@v4
+      # The dependencies (Stemma's Lean package, Verso, Mathlib and theirs),
+      # built, for exactly these versions.
+      - name: Restore the dependencies
+        id: dependencies
+        uses: actions/cache/restore@v5
         with:
-          path: .lake
-          key: lake-${{ hashFiles('lean-toolchain', 'lake-manifest.json') }}-${{ github.sha }}
-          restore-keys: lake-${{ hashFiles('lean-toolchain', 'lake-manifest.json') }}-
-      - name: Get Mathlib's cache
+          path: .lake/packages
+          key: stemma-dependencies-${{ runner.os }}-${{ hashFiles('lean-toolchain', 'lake-manifest.json') }}
+      # The library's own build, from the latest run on main.
+      - name: Restore the library's build
+        uses: actions/cache/restore@v5
+        with:
+          path: .lake/build
+          key: stemma-build-${{ runner.os }}-${{ hashFiles('lean-toolchain', 'lake-manifest.json') }}-${{ github.sha }}
+          restore-keys: stemma-build-${{ runner.os }}-${{ hashFiles('lean-toolchain', 'lake-manifest.json') }}-
+      - name: Build the dependencies
+        if: steps.dependencies.outputs.cache-hit != 'true'
         run: |
           if grep -q 'name = "mathlib"' lakefile.toml; then
             lake exe cache get
           fi
+          lake build @stemma/Stemma @stemma/stemma-extract
+      # Saved before checking, so that a check that fails keeps them.
+      - name: Save the dependencies
+        if: steps.dependencies.outputs.cache-hit != 'true' && github.event_name == 'push'
+        uses: actions/cache/save@v5
+        with:
+          path: .lake/packages
+          key: ${{ steps.dependencies.outputs.cache-primary-key }}
       - name: Check
         run: stemma check
-      - name: Verify
-        run: stemma verify
+      - name: Save the library's build
+        if: ${{ !cancelled() && github.event_name == 'push' }}
+        uses: actions/cache/save@v5
+        with:
+          path: .lake/build
+          key: stemma-build-${{ runner.os }}-${{ hashFiles('lean-toolchain', 'lake-manifest.json') }}-${{ github.sha }}
+      # The site: on pull requests, a downloadable artifact; it never fails
+      # the check.
+      - name: Build the site
+        id: site
 {%- endraw %}
+{%- if publish %}
+        continue-on-error: {% raw %}${{ github.event_name == 'pull_request' }}{% endraw %}
+{%- else %}
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+{%- endif %}
+{%- raw %}
+        run: |
+          pages=$(stemma preview --no-serve --json | jq -r .pages)
+          cp -r "$pages" _site
+      - name: Upload the site
+        if: github.event_name == 'pull_request' && steps.site.outcome == 'success'
+        uses: actions/upload-artifact@v7
+        with:
+          name: site
+          path: _site
+{%- endraw %}
+{%- if publish %}
+{%- raw %}
+      # `[site] publish = true` in stemma.toml: main's site goes to GitHub Pages.
+      - name: Upload the site for GitHub Pages
+        if: github.event_name == 'push'
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+  publish:
+    name: Publish the site
+    needs: check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
+{%- endraw %}
+{%- endif %}

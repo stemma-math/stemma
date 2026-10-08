@@ -49,33 +49,47 @@ pub struct NewPullRequest<'a> {
     pub body: &'a str,
 }
 
-/// A step of setting the group's repository up. More steps (the site's
-/// publication) come after these.
+/// A step of setting the group's repository up.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Step {
     /// A ruleset on `main`: pull requests required, no direct or forced
-    /// pushes, no deletion, and the check `Stemma` required.
+    /// pushes, no deletion, and the checks of the workflow required.
     Rules,
     /// Pull requests are merged with merge commits only.
     MergeCommits,
+    /// GitHub Pages publishes the site the workflow builds on `main`. Only
+    /// for a library that publishes its site (`[site] publish`).
+    Pages,
 }
 
-/// The name of the required check: the job of the workflow `stemma` writes.
-pub const REQUIRED_CHECK: &str = "Stemma";
+/// The names of the required checks: the jobs of the workflow `stemma`
+/// writes (`.github/workflows/stemma.yml`).
+pub const REQUIRED_CHECKS: &[&str] = &["Stemma verify", "Stemma check"];
 
 impl Step {
     /// Every step, in the order they are applied.
-    pub const ALL: &'static [Step] = &[Step::Rules, Step::MergeCommits];
+    pub const ALL: &'static [Step] = &[Step::Rules, Step::MergeCommits, Step::Pages];
+
+    /// The steps a library needs: Pages only when it publishes its site.
+    pub fn for_library(dir: &Path) -> Vec<Step> {
+        let publish = crate::config::Config::read(dir).is_ok_and(|c| c.site.publish);
+        Self::ALL
+            .iter()
+            .copied()
+            .filter(|s| *s != Step::Pages || publish)
+            .collect()
+    }
 
     /// What the step sets up.
     pub fn describe(self) -> &'static str {
         match self {
             Step::Rules => {
-                "`main` changes only through pull requests that pass the check `Stemma`: \
-                 no direct or forced pushes"
+                "`main` changes only through pull requests that pass the checks `Stemma verify` \
+                 and `Stemma check`: no direct or forced pushes"
             }
             Step::MergeCommits => "pull requests are merged with merge commits only",
+            Step::Pages => "GitHub Pages publishes the site the workflow builds on `main`",
         }
     }
 
@@ -85,12 +99,18 @@ impl Step {
             Step::Rules => {
                 "in the repository's Settings → Rules → Rulesets, add a ruleset named \
                  \"Stemma\" for the branch `main` that restricts deletions, requires a pull \
-                 request before merging (no approvals needed), requires the status check \
-                 \"Stemma\", and blocks force pushes"
+                 request before merging (no approvals needed), requires the status checks \
+                 \"Stemma verify\" and \"Stemma check\", and blocks force pushes"
             }
             Step::MergeCommits => {
                 "in the repository's Settings → General → Pull Requests, allow merge commits, \
                  and disallow squash merging and rebase merging"
+            }
+            Step::Pages => {
+                "in the repository's Settings → Pages, set the source to \"GitHub Actions\" \
+                 (GitHub Pages needs a public repository, or a plan that allows it for private \
+                 ones); until then, the workflow's job \"Publish the site\" fails, and nothing \
+                 else does"
             }
         }
     }
@@ -133,9 +153,9 @@ pub fn current() -> Box<dyn Forge> {
 /// Sets the group's repository up, step by step. A step that fails does not
 /// stop the others; its outcome says why.
 pub fn set_up(forge: &dyn Forge, dir: &Path) -> Vec<Outcome> {
-    Step::ALL
-        .iter()
-        .map(|&step| Outcome {
+    Step::for_library(dir)
+        .into_iter()
+        .map(|step| Outcome {
             step,
             error: forge.apply(dir, step).err().map(|e| format!("{e:#}")),
         })
@@ -272,7 +292,10 @@ fn ruleset() -> serde_json::Value {
             // GitHub would bring in with a commit of its own on the branch.
             { "type": "required_status_checks", "parameters": {
                 "strict_required_status_checks_policy": false,
-                "required_status_checks": [{ "context": REQUIRED_CHECK }],
+                "required_status_checks": REQUIRED_CHECKS
+                    .iter()
+                    .map(|c| json!({ "context": c }))
+                    .collect::<Vec<_>>(),
             } },
         ],
     })
@@ -405,6 +428,23 @@ impl Forge for GitHub {
                         "allow_squash_merge=false",
                         "-F",
                         "allow_rebase_merge=false",
+                    ],
+                    None,
+                )?;
+            }
+            Step::Pages => {
+                // Built by a workflow, not from a branch; created if missing.
+                let exists = gh(dir, &["api", &format!("repos/{repo}/pages")], None).is_ok();
+                let method = if exists { "PUT" } else { "POST" };
+                gh(
+                    dir,
+                    &[
+                        "api",
+                        "--method",
+                        method,
+                        &format!("repos/{repo}/pages"),
+                        "-f",
+                        "build_type=workflow",
                     ],
                     None,
                 )?;
@@ -552,7 +592,8 @@ mod tests {
     #[test]
     fn the_ruleset_requires_the_check_and_merge_commits() {
         let rules = ruleset().to_string();
-        assert!(rules.contains("\"context\":\"Stemma\""));
+        assert!(rules.contains("\"context\":\"Stemma verify\""));
+        assert!(rules.contains("\"context\":\"Stemma check\""));
         assert!(rules.contains("\"allowed_merge_methods\":[\"merge\"]"));
         assert!(rules.contains("non_fast_forward"));
     }
@@ -582,7 +623,11 @@ mod tests {
         let outcomes = set_up(&forge, dir);
         assert!(outcomes.iter().all(|o| o.error.is_none()));
         set_up(&forge, dir);
-        assert_eq!(forge.read().unwrap().setup, Step::ALL);
+        // Without a library that publishes its site, no Pages.
+        assert_eq!(
+            forge.read().unwrap().setup,
+            [Step::Rules, Step::MergeCommits]
+        );
         let _ = std::fs::remove_file(&path);
     }
 }

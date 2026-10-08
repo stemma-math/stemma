@@ -144,7 +144,35 @@ const MIGRATIONS: &[Migration] = &[
             a change a maintainer approves",
         apply: |files, _| require_signed_central(&mut files.config),
     },
+    Migration {
+        version: (0, 4, 0),
+        description: "the site is published to GitHub Pages only when the library says so: \
+            `[site] publish = false` is written explicitly; a maintainer sets it to true, in a \
+            change of the policy",
+        apply: |files, _| site_publish(&mut files.config),
+    },
+    Migration {
+        version: (0, 4, 0),
+        description: "the workflow has two required checks, `Stemma verify` (no build) and \
+            `Stemma check`, and caches what main built for pull requests; the repository's \
+            rules require both checks",
+        // The workflow is written from the template; the rules are set on the forge.
+        apply: |_, _| {},
+    },
 ];
+
+/// Writes `[site] publish = false`, unless the library says already what it
+/// wants.
+fn site_publish(doc: &mut DocumentMut) {
+    let site = doc
+        .entry("site")
+        .or_insert_with(|| Item::Table(toml_edit::Table::new()));
+    if let Some(table) = site.as_table_like_mut()
+        && table.get("publish").is_none()
+    {
+        table.insert("publish", value(false));
+    }
+}
 
 /// Writes `[policy] require_signed_central = true`, unless the library says
 /// already what it wants.
@@ -234,6 +262,7 @@ fn plan(library: &Library) -> Result<Plan> {
         .find(|r| r.name == "stemma")
         .and_then(|r| r.path.clone());
     let mathlib = lakefile.require.iter().any(|r| r.name == "mathlib");
+    let publish = Config::parse(&files.config.to_string()).is_ok_and(|c| c.site.publish);
     let context = json!({
         "name": config.name,
         "title": config.title,
@@ -243,6 +272,7 @@ fn plan(library: &Library) -> Result<Plan> {
         "stemma_path": stemma_path,
         "mathlib": mathlib,
         "mathlib_rev": mathlib_rev(),
+        "publish": publish,
     });
     let agents = agents_md::updated(files.agents.as_deref().unwrap_or_default())
         .or(files.agents.clone())
@@ -607,6 +637,19 @@ mod tests {
         require_signed_central(&mut d);
         let c: toml::Value = toml::from_str(&d.to_string()).unwrap();
         assert_eq!(c["policy"]["review"]["policy"][0].as_str(), Some("signer"));
+    }
+
+    #[test]
+    fn the_site_is_not_published_unless_the_library_says_so() {
+        for (before, expected) in [
+            ("[library]\nname = \"T\"\n", false),
+            ("[site]\npublish = true\n", true),
+        ] {
+            let mut d = doc(before);
+            site_publish(&mut d);
+            let c: toml::Value = toml::from_str(&d.to_string()).unwrap();
+            assert_eq!(c["site"]["publish"].as_bool(), Some(expected), "{d}");
+        }
     }
 
     #[test]

@@ -60,6 +60,10 @@ enum Commands {
         /// Do not depend on Mathlib.
         #[arg(long)]
         no_mathlib: bool,
+        /// Publish the library's site to GitHub Pages from main (`[site]
+        /// publish` in stemma.toml).
+        #[arg(long)]
+        publish_site: bool,
         /// Use Stemma's Lean package from this directory instead of its release.
         #[arg(long, env = "STEMMA_LEAN")]
         stemma_lean: Option<PathBuf>,
@@ -332,6 +336,7 @@ fn main() -> ExitCode {
             name,
             title,
             no_mathlib,
+            publish_site,
             stemma_lean,
             no_git,
             update,
@@ -347,6 +352,7 @@ fn main() -> ExitCode {
                 name,
                 title,
                 mathlib: no_mathlib.then_some(false),
+                publish: publish_site.then_some(true),
                 stemma_lean,
                 git: no_git.then_some(false),
                 update: update.then_some(true),

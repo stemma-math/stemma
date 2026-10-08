@@ -90,8 +90,9 @@ fn init_creates_the_layout() {
     let config = read(lib.join("stemma.toml"));
     assert!(config.contains("\"bob\" = { roles = [\"maintainer\", \"signer\"], keys = [] }"));
     let workflow = read(lib.join(".github/workflows/stemma.yml"));
-    assert!(workflow.contains("run: stemma verify"));
+    assert!(workflow.contains("run: stemma verify --no-build"));
     assert!(workflow.contains("fetch-depth: 0"));
+    assert!(config.contains("[site]\npublish = false\n"), "{config}");
     assert!(
         !workflow.contains("token"),
         "verifying must not need the forge"
@@ -207,8 +208,8 @@ fn upgrade_moves_an_old_library_to_this_version() {
     );
     let plan: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(plan["from"], "0.1.0");
-    // From 0.1.0: two migrations of 0.2.0, one of 0.3.0 and one of 0.4.0.
-    assert_eq!(plan["migrations"].as_array().unwrap().len(), 4);
+    // From 0.1.0: two migrations of 0.2.0, one of 0.3.0 and three of 0.4.0.
+    assert_eq!(plan["migrations"].as_array().unwrap().len(), 6);
     assert!(read(dir.join("stemma.toml")).contains("self_merge"));
 
     // Without a terminal, it asks nothing, and says what follows: a
@@ -236,6 +237,8 @@ fn upgrade_moves_an_old_library_to_this_version() {
     assert!(!config.contains("merge_without_approval"));
     // 0.4.0 requires signed central environments, explicitly.
     assert!(config.contains("require_signed_central = true"), "{config}");
+    // 0.4.0 says explicitly that the site is not published.
+    assert!(config.contains("[site]\npublish = false"), "{config}");
     assert!(read(dir.join("AGENTS.md")).contains("Working in a Stemma library"));
     assert!(!read(dir.join("lean-toolchain")).contains("v4.20.0"));
     assert!(dir.join(".github/workflows/stemma.yml").is_file());
@@ -1144,7 +1147,7 @@ fn init_and_upgrade_set_the_repository_up_and_say_what_to_set_by_hand() {
         "{text}"
     );
     assert!(
-        text.contains("requires the status check \"Stemma\""),
+        text.contains("requires the status checks \"Stemma verify\" and \"Stemma check\""),
         "{text}"
     );
 
@@ -2122,4 +2125,107 @@ fn check_validates_source_plans_and_status_shows_their_coverage() {
         "{problems}"
     );
     assert!(problems.contains("form a cycle"), "{problems}");
+}
+
+/// The jobs of a workflow, by name, and their text.
+fn jobs(workflow: &str) -> Vec<(String, String)> {
+    let body = &workflow[workflow.find("\njobs:\n").unwrap() + 7..];
+    let mut jobs: Vec<(String, String)> = Vec::new();
+    for line in body.lines() {
+        if let Some(name) = line.strip_prefix("  ").and_then(|l| l.strip_suffix(':'))
+            && !name.starts_with(' ')
+        {
+            jobs.push((name.to_string(), String::new()));
+        } else if let Some((_, text)) = jobs.last_mut() {
+            text.push_str(line);
+            text.push('\n');
+        }
+    }
+    jobs
+}
+
+#[test]
+fn the_workflow_has_two_required_jobs_and_publishes_the_site_only_when_asked() {
+    let dir = scratch("workflow");
+    for (name, extra) in [("off", None), ("on", Some("--publish-site"))] {
+        let mut args = vec!["init", name, "--no-git", "--no-mathlib", "--yes"];
+        args.extend(extra);
+        let out = stemma(&dir, &args);
+        assert!(out.status.success(), "{}", stderr(&out));
+    }
+    let off = read(dir.join("off/.github/workflows/stemma.yml"));
+    let on = read(dir.join("on/.github/workflows/stemma.yml"));
+    assert!(read(dir.join("on/stemma.toml")).contains("[site]\npublish = true\n"));
+    for workflow in [&off, &on] {
+        let jobs = jobs(workflow);
+        let (_, verify) = &jobs[0];
+        let (_, check) = &jobs[1];
+        assert_eq!(jobs[0].0, "verify");
+        assert!(verify.contains("name: Stemma verify"));
+        assert!(verify.contains("run: stemma verify --no-build"));
+        assert!(!verify.contains("elan") && !verify.contains("lake"));
+        assert_eq!(jobs[1].0, "check");
+        assert!(check.contains("name: Stemma check"));
+        assert!(check.contains("run: stemma check"));
+        // Pull requests restore main's caches; only main saves them.
+        assert!(check.contains("actions/cache/restore@"));
+        assert!(check.contains("path: .lake/packages"));
+        assert!(check.contains("path: .lake/build"));
+        assert!(check.contains("lake build @stemma/Stemma @stemma/stemma-extract"));
+        let saves: Vec<&str> = check
+            .split("\n      - ")
+            .filter(|step| step.contains("actions/cache/save@"))
+            .collect();
+        assert_eq!(saves.len(), 2);
+        for step in saves {
+            assert!(step.contains("github.event_name == 'push'"), "{step}");
+        }
+        // Pull requests carry the site.
+        assert!(check.contains("stemma preview --no-serve"));
+        assert!(check.contains("actions/upload-artifact@"));
+        assert!(
+            workflow.contains("cancel-in-progress: ${{ github.event_name == 'pull_request' }}")
+        );
+    }
+    assert_eq!(jobs(&off).len(), 2);
+    assert!(!off.contains("deploy-pages") && !off.contains("upload-pages-artifact"));
+    let jobs = jobs(&on);
+    assert_eq!(jobs.len(), 3);
+    let (name, publish) = &jobs[2];
+    assert_eq!(name, "publish");
+    assert!(publish.contains("needs: check"));
+    assert!(publish.contains("if: github.event_name == 'push' && github.ref == 'refs/heads/main'"));
+    assert!(publish.contains("pages: write"));
+    assert!(publish.contains("actions/deploy-pages@"));
+    assert!(jobs[1].1.contains("actions/upload-pages-artifact@"));
+}
+
+#[test]
+fn a_library_that_publishes_its_site_sets_pages_up() {
+    let s = Shared::new("pages");
+    let config = read(s.lib.join("stemma.toml")).replace("publish = false", "publish = true");
+    std::fs::write(s.lib.join("stemma.toml"), config).unwrap();
+    std::fs::write(&s.forge, "{}").unwrap();
+    let out = s.stemma(
+        &s.lib,
+        &["upgrade", "--no-update", "--no-commit", "--json"],
+        &[],
+    );
+    assert!(out.status.success(), "{}", stderr(&out));
+    let state: serde_json::Value = serde_json::from_str(&read(s.forge.clone())).unwrap();
+    assert_eq!(
+        state["setup"],
+        serde_json::json!(["rules", "merge-commits", "pages"])
+    );
+    assert!(read(s.lib.join(".github/workflows/stemma.yml")).contains("actions/deploy-pages@"));
+
+    // When Pages cannot be enabled, it says what to set by hand.
+    std::fs::write(&s.forge, "{\"deny_setup\": true}").unwrap();
+    let out = s.stemma(&s.lib, &["upgrade", "--no-update", "--no-commit"], &[]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.contains("set the source to \"GitHub Actions\""),
+        "{text}"
+    );
 }

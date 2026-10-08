@@ -209,6 +209,9 @@ alice = { roles = ["maintainer", "signer"], keys = ["ssh-ed25519 AAAA…"] }
 require_signed_central = true   # every central environment is signed (§3)
 
 [policy.review]             # optional (§4)
+
+[site]
+publish = false             # whether the site is published from main (§4, "Forges")
 ```
 
 - A member is who signs with one of their **keys**: the SSH public keys listed
@@ -222,6 +225,10 @@ require_signed_central = true   # every central environment is signed (§3)
   current signature (§3). It is on unless the group turns it off: `stemma
   init` writes it, and so does `stemma upgrade` in libraries made before it
   existed. Like the rest of the policy, it is read from `main`.
+- `[site] publish` says whether the forge publishes the library's site from
+  `main` (§4, "Forges"). It is off unless the group turns it on: `stemma init`
+  asks, and `stemma upgrade` writes it, off, in libraries made before it
+  existed.
 
 ### Not committed
 
@@ -787,19 +794,26 @@ The first forge Stemma supports is GitHub:
 |---|---|
 | `main` changes only through pull requests | A ruleset on `main`: pull requests required, no direct or forced pushes, no deletion |
 | Merge commits only | The repository allows merge commits, and neither squash nor rebase merging |
-| Required checks | A GitHub Actions workflow written by `stemma` (`.github/workflows/stemma.yml`) that runs `stemma check` and `stemma verify`; its check, `Stemma`, is required by the ruleset (without requiring branches to be up to date, which would make the forge commit on share branches) |
+| Required checks | A GitHub Actions workflow written by `stemma` (`.github/workflows/stemma.yml`) with two jobs, both required by the ruleset (without requiring branches to be up to date, which would make the forge commit on share branches): `Stemma verify`, which runs `stemma verify --no-build` and needs only the history and `stemma`, so that a signature problem is reported within a minute; and `Stemma check`, which runs `stemma check` |
 | Signatures and approvals | Signed commits, checked by `stemma verify` with git against the members' keys: GitHub's reviews play no part |
-| The library's site | GitHub Pages, published from `main` by the same workflow |
+| The library's site | Pull requests carry the built site (`stemma preview --no-serve`) as a downloadable artifact, and nothing is deployed from them. When `[site] publish` is on, the same workflow builds the site on every push to `main` and publishes it to GitHub Pages |
 
 - The checks run without secrets: `stemma verify` reads only the repository,
   so it gives the same answer on GitHub, on any other forge, and on a
   person's machine.
-- Builds cache `.lake` between runs.
-- `stemma` sets the repository up (rules, required check, merge commits only,
-  workflow, Pages) when it creates the library, and `stemma upgrade` applies
-  the same setup to existing libraries. When the forge's command line is
-  missing or lacks permission, it says exactly what to set by hand, and the
-  rest goes on.
+- Builds cache what `main` built, so that a pull request builds only the
+  library's own modules that changed: the dependencies (Stemma's Lean
+  package, Verso, Mathlib and theirs) under `.lake/packages`, keyed by the
+  toolchain and `lake-manifest.json`, and the library's build under
+  `.lake/build`. Only runs on `main` save caches, and they save them even when
+  a check fails, so that pull requests, which can read `main`'s caches, never
+  evict them.
+- `stemma` sets the repository up (rules, required checks, merge commits only,
+  workflow, and Pages when the site is published) when it creates the
+  library, and `stemma upgrade` applies the same setup to existing libraries.
+  When the forge's command line is missing or lacks permission (or, for
+  Pages, the plan does not allow it), it says exactly what to set by hand, and
+  the rest goes on.
 - Everything `stemma` asks of a forge (who the person is, finding and opening
   pull requests, setting the repository up) goes through one part of it, so
   that other forges can be supported.

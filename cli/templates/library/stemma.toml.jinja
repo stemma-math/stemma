@@ -13,3 +13,8 @@ stemma = "{{ version }}"
 # signature, or `stemma check` fails.
 [policy]
 require_signed_central = true
+
+# The library's site: whether the workflow publishes it to GitHub Pages, from
+# main. Pull requests carry it as an artifact either way.
+[site]
+publish = {{ publish | tojson }}
