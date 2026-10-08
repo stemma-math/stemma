@@ -53,32 +53,18 @@ struct Outcome {
 
 /// Opens the pull request from `branch` to `main`, or finds the open one.
 fn pull_request(dir: &Path, branch: &str) -> Option<String> {
-    let view = Command::new("gh")
-        .args([
-            "pr",
-            "view",
-            branch,
-            "--json",
-            "url,state",
-            "--jq",
-            "select(.state == \"OPEN\") | .url",
-        ])
-        .current_dir(dir)
-        .output()
-        .ok()?;
-    let existing = String::from_utf8_lossy(&view.stdout).trim().to_string();
-    if view.status.success() && !existing.is_empty() {
-        return Some(existing);
+    let forge = crate::forge::current();
+    if let Ok(Some(open)) = crate::forge::open_pull_request_from(forge.as_ref(), dir, branch) {
+        return Some(open.url);
     }
-    let create = Command::new("gh")
-        .args(["pr", "create", "--base", "main", "--head", branch, "--fill"])
-        .current_dir(dir)
-        .output()
-        .ok()?;
-    create
-        .status
-        .success()
-        .then(|| String::from_utf8_lossy(&create.stdout).trim().to_string())
+    let title = git_ok(dir, &["log", "-1", "--format=%s"]).ok()?;
+    let new = crate::forge::NewPullRequest {
+        head: branch,
+        base: "main",
+        title: &title,
+        body: "",
+    };
+    forge.open_pull_request(dir, &new).ok().map(|pr| pr.url)
 }
 
 /// Shares the working branch: checks, brings `main` in, checks again, pushes,

@@ -202,19 +202,11 @@ fn prepare_codex(library: &Library) -> Vec<String> {
     ]
 }
 
-/// The person's handle: their GitHub login when `gh` knows it, otherwise
-/// their git name, simplified.
+/// The person's handle: their account on the forge when it is known,
+/// otherwise their git name, simplified.
 pub fn person() -> String {
-    let gh = Command::new("gh")
-        .args(["api", "user", "--jq", ".login"])
-        .output();
-    if let Ok(out) = gh
-        && out.status.success()
-    {
-        let login = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if !login.is_empty() {
-            return login;
-        }
+    if let Some(login) = crate::forge::current().login() {
+        return login;
     }
     let name = Command::new("git")
         .args(["config", "user.name"])

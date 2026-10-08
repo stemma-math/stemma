@@ -11,9 +11,10 @@ fn scratch(name: &str) -> PathBuf {
     dir
 }
 
-/// A git identity, so that commits work wherever the tests run, and no global
-/// configuration of git or of `gh` (such as a signing key or a login).
-const IDENTITY: [(&str, &str); 7] = [
+/// A git identity, so that commits work wherever the tests run, no global
+/// configuration of git or of `gh` (such as a signing key or a login), and no
+/// forge: tests never reach GitHub.
+const IDENTITY: [(&str, &str); 8] = [
     ("GIT_AUTHOR_NAME", "Test"),
     ("GIT_AUTHOR_EMAIL", "test@example.com"),
     ("GIT_COMMITTER_NAME", "Test"),
@@ -21,6 +22,7 @@ const IDENTITY: [(&str, &str); 7] = [
     ("GIT_CONFIG_GLOBAL", "/dev/null"),
     ("GIT_CONFIG_NOSYSTEM", "1"),
     ("GH_CONFIG_DIR", "/nonexistent"),
+    ("STEMMA_FORGE", "none"),
 ];
 
 fn git(dir: &Path, args: &[&str]) -> String {

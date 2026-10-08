@@ -5,6 +5,7 @@ mod agents_md;
 mod branches;
 mod commands;
 mod config;
+mod forge;
 mod help;
 mod init;
 mod interact;
