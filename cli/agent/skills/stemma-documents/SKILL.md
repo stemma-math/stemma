@@ -54,15 +54,35 @@ The cosets of the subgroup partition the group, and all have its size.
 - Prose can only refer, with `{name}` or `{lean}`, to what is already
   declared above it.
 
+## Citing the literature
+
+References live in `references.bib`, at the root of the library. Prose cites
+an entry by its key, optionally saying where in the work:
+
+```
+As in {cite}`BurrisSankappanavar`, or more precisely
+{cite "Def. II.1.3"}`BurrisSankappanavar`.
+```
+
+- The key must be in `references.bib`; an unknown key does not compile. To
+  cite something new, add its entry first (author, title and year are
+  required; add `journal`, `booktitle` or `publisher`, and `doi` or `url`
+  when known), and tell the person: they check every entry.
+- Never invent bibliographic data. If you are not sure of an entry, ask.
+
 ## Environments
 
 | Names | Base kind | Required marks | Optional marks |
 |---|---|---|---|
 | `definition`, `construction` | definition | `label`, `central` | `title`, `cited` |
-| `theorem`, `lemma`, `proposition`, `corollary`, `conjecture` | statement | `label`, `central` | `title`, `cited` |
+| `theorem`, `lemma` (`Stemma.lemma` with Mathlib), `proposition`, `corollary`, `conjecture` | statement | `label`, `central` | `title`, `cited` |
 | `proof` | proof | `of` | `label`, `title` |
 | `remark`, `example`, `note` | remark | — | `label`, `title` |
 
+- **With Mathlib, write `:::Stemma.lemma`**, not `:::lemma`: Mathlib's `lemma`
+  command makes the plain name ambiguous ("directive name `lemma` is
+  ambiguous"). The other names do not clash; any name may be written
+  qualified, `:::Stemma.theorem`.
 - **`label`**: lowercase letters, digits, `-` and `.` (`lagrange`,
   `groups.index-mul`), unique in the library. It is how everything cites the
   environment. Never change the label of a signed environment.
@@ -71,10 +91,14 @@ The cosets of the subgroup partition the group, and all have its size.
   unless the person decided otherwise, and propose candidates for central
   when you finish a block of work (see `stemma-mathematics`).
 - **`of`**: the label of the definition or statement a proof proves, already
-  declared (above, or in an imported module).
-- **`cited`**: a reference in `references.bib`. The environment's obligations
-  are accepted from the literature: only then may its Lean contain `axiom`s,
-  and only for propositions.
+  declared (above, or in an imported module). Place a proof right after what
+  it proves when you can: the site then heads it "Proof."; elsewhere it reads
+  "Proof of Theorem 8.", with a link.
+- **`cited`**: the key of an entry of `references.bib`, optionally followed by
+  a comma and where in the work: `(cited := "BurrisSankappanavar, Thm. 4.2")`.
+  The key must exist. The environment's obligations are accepted from the
+  literature: only then may its Lean contain `axiom`s, and only for
+  propositions.
 - A group can add names in a Lean module imported by its documents:
   `register_environment hypothesis : statement "Hypothesis"`.
 

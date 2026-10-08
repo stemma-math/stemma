@@ -86,6 +86,42 @@ Who writes each entry:
   the same way.
 - `readings/` is reserved for them; their format is not specified yet.
 
+### References
+
+`references.bib` is the library's bibliography, in BibTeX, and the source of
+truth of its references: people edit it, and check every entry an agent adds.
+`stemma init` creates it empty, and `stemma upgrade` creates it where it is
+missing.
+
+- Stemma reads, for each entry, its key, its authors (or editors), title and
+  year, which are required, and its venue or publisher, and a `url` or `doi`
+  when it has one. `@comment` and `@preamble` are skipped; `@string`
+  abbreviations are not supported.
+- The file is read strictly: a malformed entry, a repeated key, a missing
+  required field or text outside every entry (other than `%` comments) is an
+  error that names the line, never a silent omission.
+- It is read when a document that cites it is elaborated (§2). Lake does not
+  track it, so a document already built is checked again only when it is
+  rebuilt; the site, which reads it every time it is built, fails on any
+  citation of a key it lacks.
+
+### The site
+
+The library's site presents the modules in the order of the table of contents,
+and then two pages of its own:
+
+- an **index of central environments**, by page, with their labels and
+  signature states;
+- the **bibliography**: every entry of `references.bib`, with the environments
+  that cite it.
+
+Every environment with a label is anchored by it, so that
+`…/<page>/#<label>` links to it, and shows its label discreetly, with a
+button that copies it. Central environments carry a mark, and their signature
+state (§3) when the site has it: `stemma preview` writes it, computed from
+`signatures/`, to `stemma-state.json` beside the pages. A site built without
+that file shows the marks and no state.
+
 ### Agent instructions are not copied into the library
 
 The rules, skills and permissions agents work with belong to the version of
@@ -189,6 +225,13 @@ theorem two_mul_add_zero (k : Nat) : 2 * k + 0 = 2 * k := rfl
 - **Prose comes first.** After the header, the file is Verso markup:
   paragraphs, sections, mathematics (`` $`…` ``, `` $$`…` ``), lists, and
   references to Lean (`` {lean}`…` ``, `` {name}`…` ``), which Lean checks.
+- **Prose cites the literature** with the `cite` role and a key of
+  `references.bib`, optionally with where in the work:
+  `` {cite}`BurrisSankappanavar` ``,
+  `` {cite "Def. II.1.3"}`BurrisSankappanavar` ``. A key that is not in
+  `references.bib` is an error, the way an unknown name in `{name}` is. On the
+  site, a citation shows the authors and year, and links to the entry in the
+  bibliography.
 - **Lean goes in ` ```lean ` blocks.** They are elaborated in order, and what
   they declare is part of the library: a module that imports the document
   sees those declarations as it would see any others.
@@ -241,6 +284,12 @@ Stemma ships these:
 | Proof | `proof` |
 | Remark, Example, Note | `remark` |
 
+A document that imports Mathlib writes a lemma as `:::Stemma.lemma`: Mathlib
+declares a `lemma` command, which makes the plain `:::lemma` ambiguous (Verso
+reports "directive name `lemma` is ambiguous", and `stemma check` names the
+qualified form). Every name can be written qualified, `:::Stemma.<name>`; of
+the names Stemma ships, only `lemma` clashes with Mathlib.
+
 A group registers its own names with a Lean command, in a module imported
 before they are used (for example, a `hypothesis` named "Hypothesis" on top of
 `statement`).
@@ -254,7 +303,7 @@ before they are used (for example, a `hypothesis` named "Hypothesis" on top of
 | `central` | `definition`, `statement` | yes, `true` or `false` | Whether the environment is central: signed and audited (§3). |
 | `of` | `proof` | yes | The label of the definition or statement it proves, which must already exist, in the same module or an imported one. |
 | `title` | any | no | A name shown with the environment: "Theorem 3.2 (Zorn's lemma)". |
-| `cited` | `definition`, `statement` | no | A reference in `references.bib`: the environment's obligations are accepted from the literature instead of proved. |
+| `cited` | `definition`, `statement` | no | A reference in `references.bib`, as its key, optionally followed by a comma and where in the work (`"BurrisSankappanavar, Thm. 4.2"`): the environment's obligations are accepted from the literature instead of proved. The key must be in `references.bib`; the site shows the reference on the environment. |
 
 Dependencies ("this uses that definition") are not marks: they are computed
 from the Lean.
@@ -284,6 +333,14 @@ The elaborator enforces these; breaking one is a compilation error.
   proposition**: an obligation accepted from the literature, never an object.
   So the axioms a result depends on say exactly which literature it rests on.
 - A `proof` names, with `of`, an existing definition or statement.
+- A key cited by prose or by a `cited` mark is in `references.bib`.
+
+#### On the site
+
+Definitions, statements and remarks are numbered in their module. A proof's
+heading names what it proves, "*Proof of Theorem 8.*", with a link to it on its
+own page, unless it immediately follows it, with nothing but blank space
+between them: then it is "*Proof.*".
 
 ## 3. Signatures
 
