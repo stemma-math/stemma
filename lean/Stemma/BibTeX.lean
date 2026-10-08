@@ -343,8 +343,10 @@ private partial def entry : P (Option Entry) := do
   let some year := get? "year" | missing "year"
   let venue := ["journal", "booktitle", "publisher", "school", "institution", "organization",
     "howpublished"].findSome? get?
-  let url := (get? "url").orElse fun _ => (get? "doi").map fun d =>
-    let d := plain d
+  -- Links are taken as written, but for braces: `~` and `--` are part of them.
+  let link (v : String) := (String.ofList (v.toList.filter (fun c => c != '{' && c != '}'))).trimAscii.toString
+  let url := (get? "url").map link |>.orElse fun _ => (get? "doi").map fun d =>
+    let d := link d
     if d.startsWith "http" then d else s!"https://doi.org/{d}"
   -- Keep the `and others` of a list of names as a last person, shown as "et al.".
   let others (field : String) (ps : Array Person) :=
@@ -354,7 +356,7 @@ private partial def entry : P (Option Entry) := do
     authors := others "author" authors
     editors := others "editor" editors
     title := plain title, year := plain year
-    venue := venue.map plain, url := url.map plain
+    venue := venue.map plain, url
   }
 
 private partial def entries (acc : Array Entry) : P (Array Entry) := do

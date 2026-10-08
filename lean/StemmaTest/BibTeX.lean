@@ -67,6 +67,13 @@ info: "BurrisSankappanavar: Burris and Sankappanavar 1981: Stanley Burris and H.
 #guard_msgs in
 #eval render "@book{A, author = {X}, title = {T}, title = {U}, year = 1}"
 
+/-- info: [some "https://example.org/~user/a--b", some "https://doi.org/10.1000/x~1"] -/
+#guard_msgs in
+#eval match parse "@misc{A, author = {X}, title = {T}, year = 1, url = {https://example.org/~user/a--b}}
+@misc{B, author = {X}, title = {T}, year = 1, doi = {10.1000/x~1}}" with
+  | .ok es => es.toList.map (fun (e : Entry) => e.url)
+  | .error e => [some e]
+
 /-- info: ("Key2001", some "Prop. 3.4") -/
 #guard_msgs in
 #eval splitCitation "Key2001, Prop. 3.4"
