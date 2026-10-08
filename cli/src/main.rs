@@ -116,7 +116,8 @@ enum Commands {
         #[arg(long)]
         anyway: bool,
     },
-    /// Make blind read-backs of environments' Lean, and show them beside their prose.
+    /// Make blind read-backs of environments' Lean, and serve a page that sets
+    /// them beside their prose, for a person to read.
     Readback {
         /// Read back these labels. By default, every central environment
         /// without a current read-back.
@@ -127,6 +128,14 @@ enum Commands {
         /// Make them again even when they are current.
         #[arg(long)]
         force: bool,
+        /// Print the text of the read-backs (of the labels given, or every
+        /// one) instead of making any: only when the person asks for it.
+        #[arg(long, conflicts_with_all = ["force", "notes"])]
+        content: bool,
+        /// Print the person's marks and notes (on the labels given, or every
+        /// one) instead of making any.
+        #[arg(long, conflicts_with = "force")]
+        notes: bool,
         /// The agent that makes them.
         #[arg(long, value_enum, default_value = "claude")]
         agent: readback::Translator,
@@ -307,6 +316,8 @@ fn main() -> ExitCode {
             labels,
             module,
             force,
+            content,
+            notes,
             agent,
             model,
             no_serve,
@@ -320,6 +331,8 @@ fn main() -> ExitCode {
                 model,
                 serve: !no_serve,
                 port,
+                content,
+                notes,
             },
             cli.json,
         ),

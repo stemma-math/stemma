@@ -147,20 +147,10 @@ fn proposing_agent(library: &Library, module: &str) -> Option<String> {
     (!agent.is_empty()).then_some(agent)
 }
 
-/// The read-back of an environment, when a current one exists: a link to the
-/// page that shows read-backs beside their prose.
+/// The read-back of an environment, when a current one exists: a link to its
+/// place on the page that shows read-backs beside their prose.
 pub fn readback_link(library: &Library, env: &Environment) -> Option<String> {
-    #[derive(Deserialize)]
-    struct Made {
-        formal: String,
-    }
-    let label = env.record.label.as_deref()?;
-    let dir = library.dir.join(".stemma").join("readbacks");
-    let text = std::fs::read_to_string(dir.join(format!("{label}.json"))).ok()?;
-    let made: Made = serde_json::from_str(&text).ok()?;
-    let current = env.fingerprints.as_ref()?.formal == made.formal;
-    let page = dir.join("index.html");
-    (current && page.is_file()).then(|| format!("file://{}", page.display()))
+    crate::readback::link(&library.dir, env)
 }
 
 /// A central environment awaiting the signer.
@@ -532,6 +522,7 @@ pub fn sign(labels: Vec<String>, base: String, commit: bool) -> Result<bool> {
                 &path,
                 signature_file(p.env, &member, &signed, by.as_deref()),
             )?;
+            crate::readback::archive_signed(&library.dir, p.env);
         }
     }
     if !commit {
