@@ -96,7 +96,31 @@ pub fn build(library: &Library) -> Result<std::result::Result<PathBuf, String>> 
             String::from_utf8_lossy(&output.stderr)
         );
     }
-    Ok(Ok(out.join("html-multi")))
+    let pages = out.join("html-multi");
+    let state = state_json(&report, &library.dir);
+    std::fs::write(
+        pages.join(STATE_FILE),
+        serde_json::to_string_pretty(&state)?,
+    )?;
+    Ok(Ok(pages))
+}
+
+/// The file of the site that holds the signature state of central
+/// environments, which its pages read to show it.
+const STATE_FILE: &str = "stemma-state.json";
+
+/// The signature state of every central environment, by label.
+fn state_json(report: &Report, library: &Path) -> serde_json::Value {
+    let environments: serde_json::Map<String, serde_json::Value> = report
+        .environments
+        .iter()
+        .filter_map(|e| {
+            let label = e.record.label.clone()?;
+            let state = e.signature(library)?;
+            Some((label, json!(state)))
+        })
+        .collect();
+    json!({ "version": 1, "environments": environments })
 }
 
 /// `stemma preview`: builds the site and serves it locally.
@@ -246,6 +270,53 @@ mod tests {
         );
         assert_eq!(resolve(&root, "/../etc/passwd"), None);
         assert_eq!(resolve(&root, "/missing.html"), None);
+    }
+
+    fn environment(label: &str, central: bool, prose: &str) -> serde_json::Value {
+        json!({
+            "record": {
+                "name": "theorem", "display": "Theorem", "base": "statement",
+                "label": label, "central": central, "cited": null, "title": null, "of": null,
+                "decls": ["t"], "prose": "", "lean": "", "module": "Lib.A", "line": 1,
+            },
+            "state": "proved",
+            "fingerprints": { "version": 1, "prose": prose, "formal": "sha256:f" },
+            "closure": [],
+        })
+    }
+
+    #[test]
+    fn writes_the_signature_state_of_central_environments() {
+        let dir = std::env::temp_dir().join(format!("stemma-state-{}", std::process::id()));
+        let signatures = dir.join("signatures");
+        std::fs::create_dir_all(&signatures).unwrap();
+        let signature = |prose: &str| {
+            format!(
+                "label = \"x\"\nkind = \"statement\"\ncentral = true\n\
+                 [fingerprints]\nversion = 1\nprose = \"{prose}\"\nformal = \"sha256:f\"\n"
+            )
+        };
+        std::fs::write(signatures.join("signed.toml"), signature("sha256:p")).unwrap();
+        std::fs::write(signatures.join("stale.toml"), signature("sha256:old")).unwrap();
+        let report: Report = serde_json::from_value(json!({
+            "version": 1, "library": "Lib", "rootDocument": false, "modules": [],
+            "environments": [
+                environment("signed", true, "sha256:p"),
+                environment("stale", true, "sha256:p"),
+                environment("unsigned", true, "sha256:p"),
+                environment("auxiliary", false, "sha256:p"),
+            ],
+            "diagnostics": [],
+        }))
+        .unwrap();
+        assert_eq!(
+            state_json(&report, &dir),
+            json!({
+                "version": 1,
+                "environments": { "signed": "signed", "stale": "stale", "unsigned": "unsigned" },
+            })
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

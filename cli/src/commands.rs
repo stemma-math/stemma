@@ -21,6 +21,9 @@ pub const DEFAULT_BASE: &str = "origin/main";
 /// Where Stemma's Lean package is published.
 pub const STEMMA_GIT: &str = "https://github.com/stemma-math/stemma";
 
+/// The library's references, which documents cite.
+pub const REFERENCES: &str = "references.bib";
+
 /// The Mathlib release matching the Lean toolchain.
 pub fn mathlib_rev() -> &'static str {
     LEAN_TOOLCHAIN
@@ -156,10 +159,41 @@ pub fn build_and_extract(
     Ok(Ok(report?))
 }
 
-/// Says that the library does not build, with Lake's errors.
+/// Says that the library does not build, with Lake's errors and hints to fix them.
 pub fn show_build_errors(output: &str) {
     ui::error("The library does not build:");
     println!("{output}");
+    for hint in build_hints(output) {
+        ui::note(hint);
+    }
+}
+
+/// Hints for errors whose fix Stemma knows. Verso reports a directive name
+/// as ambiguous when another package (Mathlib's `lemma` command) declares the
+/// same name: the qualified name of Stemma's environment resolves it.
+pub fn build_hints(output: &str) -> Vec<String> {
+    const START: &str = "directive name `";
+    const MIDDLE: &str = "` is ambiguous. Candidates: ";
+    let mut hints = Vec::new();
+    for line in output.lines() {
+        let Some((_, rest)) = line.split_once(START) else {
+            continue;
+        };
+        let Some((name, candidates)) = rest.split_once(MIDDLE) else {
+            continue;
+        };
+        let qualified = format!("Stemma.{name}");
+        if candidates.split(", ").any(|c| c.trim() == qualified) {
+            let hint = format!(
+                "`:::{name}` is ambiguous here, because an imported package (such as Mathlib) \
+                 also declares `{name}`: write `:::{qualified}` instead."
+            );
+            if !hints.contains(&hint) {
+                hints.push(hint);
+            }
+        }
+    }
+    hints
 }
 
 /// The outcome of every check of the specification.
@@ -280,7 +314,10 @@ pub fn check(json_output: bool) -> Result<bool> {
     let ok = problems.is_empty() && build_errors.is_none();
     emit(
         json_output,
-        &json!({ "ok": ok, "build": build_errors, "problems": problems }),
+        &json!({
+            "ok": ok, "build": build_errors, "problems": problems,
+            "hints": build_errors.as_deref().map(build_hints).unwrap_or_default(),
+        }),
         || {
             if let Some(output) = &build_errors {
                 show_build_errors(output);
@@ -441,4 +478,23 @@ pub fn status(json_output: bool) -> Result<bool> {
         ui::error(&d.message);
     }
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hints_at_the_qualified_name_of_an_ambiguous_environment() {
+        let output = "error: Alg/Groups.lean:12:3: directive name `lemma` is ambiguous. \
+            Candidates: Stemma.lemma, _root_.lemma\n\
+            error: Alg/Groups.lean:20:3: directive name `lemma` is ambiguous. \
+            Candidates: Stemma.lemma, _root_.lemma\n\
+            error: Alg/Other.lean:3:3: directive name `widget` is ambiguous. \
+            Candidates: Foo.widget, _root_.widget";
+        let hints = build_hints(output);
+        assert_eq!(hints.len(), 1);
+        assert!(hints[0].contains("`:::Stemma.lemma`"));
+        assert!(build_hints("error: unknown directive `lemma`").is_empty());
+    }
 }

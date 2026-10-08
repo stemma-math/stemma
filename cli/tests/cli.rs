@@ -83,6 +83,7 @@ fn init_creates_the_layout() {
         "README.md",
         ".gitignore",
         ".github/workflows/stemma.yml",
+        "references.bib",
     ] {
         assert!(lib.join(file).is_file(), "missing {file}");
     }
@@ -195,6 +196,7 @@ fn upgrade_moves_an_old_library_to_this_version() {
     .unwrap();
     std::fs::write(dir.join("lean-toolchain"), "leanprover/lean4:v4.20.0\n").unwrap();
     std::fs::remove_file(dir.join(".github/workflows/stemma.yml")).unwrap();
+    std::fs::remove_file(dir.join("references.bib")).unwrap();
 
     // A dry run changes nothing.
     let out = stemma(&dir, &["upgrade", "--dry-run", "--json"]);
@@ -225,11 +227,16 @@ fn upgrade_moves_an_old_library_to_this_version() {
     assert!(read(dir.join("AGENTS.md")).contains("Working in a Stemma library"));
     assert!(!read(dir.join("lean-toolchain")).contains("v4.20.0"));
     assert!(dir.join(".github/workflows/stemma.yml").is_file());
+    // The references, created where missing, and never written over.
+    assert_eq!(read(dir.join("references.bib")), "");
+    let entry = "@book{K, author = {A}, title = {T}, year = {2000}}\n";
+    std::fs::write(dir.join("references.bib"), entry).unwrap();
 
     // Upgrading again changes nothing.
     let out = stemma(&dir, &["upgrade", "--no-update", "--json"]);
     let again: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert!(again["changed"].as_array().unwrap().is_empty());
+    assert_eq!(read(dir.join("references.bib")), entry);
 }
 
 #[test]

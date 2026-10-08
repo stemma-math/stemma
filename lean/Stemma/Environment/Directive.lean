@@ -1,6 +1,7 @@
 import VersoManual
 import Stemma.Environment.Record
 import Stemma.Environment.Obligations
+import Stemma.Bibliography
 
 /-!
 # Environment directives
@@ -59,45 +60,113 @@ structure Marks where
   cited : Option String := none
   of : Option String := none
 
-/-- The style of environments on the site. -/
-def environmentCss : String := r#"
-.stemma-env { margin: 1.2em 0; }
-.stemma-env-heading { margin-bottom: 0.3em; }
-.stemma-statement > p, .stemma-statement > ul, .stemma-statement > ol { font-style: italic; }
-.stemma-statement > .stemma-env-heading { font-style: normal; }
-.stemma-proof > p:last-of-type::after { content: "∎"; float: right; }
-.stemma-proof-of { font-size: 0.85em; color: var(--verso-text-color, #555); opacity: 0.7; }
-.stemma-formalization { margin-top: 0.5em; border-left: 3px solid #d0d7de; padding-left: 0.8em; }
-.stemma-formalization > summary { cursor: pointer; font-size: 0.85em; opacity: 0.7; }
-"#
+/-- What the site shows of an environment, which elaboration decides. -/
+structure EnvData where
+  display : String
+  base : String
+  /-- Definitions, statements and remarks are numbered in their module. -/
+  number : Option Nat := none
+  label : Option String := none
+  title : Option String := none
+  central : Bool := false
+  /-- The key of the entry of `references.bib` a `cited` environment rests on. -/
+  cited : Option String := none
+  /-- Where in the cited work, after the key in the `cited` mark. -/
+  locator : Option String := none
+  /-- For a proof, the label of what it proves. -/
+  of : Option String := none
+  /-- Whether a proof immediately follows what it proves, and so need not name it. -/
+  adjacent : Bool := false
+  deriving ToJson, FromJson
 
-block_extension Block.environment (display base : String) (number : Option Nat)
-    (label title of : Option String) where
-  data := toJson (display, base, number, label, title, of)
-  extraCss := [environmentCss]
-  traverse _ _ _ := pure none
+/-- How readers name an environment: "Theorem 8". -/
+def EnvData.name (d : EnvData) : String :=
+  match d.number with
+  | some n => s!"{d.display} {n}"
+  | none => d.display
+
+/--
+The heading of a proof, as text and an optional link target: "Proof." when it
+immediately follows what it proves, and "Proof of Theorem 8." otherwise, with
+"Theorem 8" linked. `target` is the name of what it proves, and its link.
+-/
+def proofHeading (d : EnvData) (target : Option (String × String)) :
+    String × Option (String × String) :=
+  if d.adjacent || d.of.isNone then (d.display, none)
+  else match target with
+    | some t => (s!"{d.display} of ", some t)
+    | none => (s!"{d.display} of {d.of.getD ""}", none)
+
+open Verso.Output.Html in
+/-- An environment's label, discreet, linked to its anchor, with a button that copies it. -/
+def labelHtml (label : String) (href : String) : Verso.Output.Html :=
+  {{<span class="stemma-label">
+      <a href={{href}} title="The environment's label">{{label}}</a>
+      <button class="stemma-copy" type="button" data-label={{label}} title="Copy the label"></button>
+    </span>}}
+
+open Verso.Output.Html in
+/-- The mark of a central environment, and the place its signature state goes. -/
+def centralHtml (label : String) : Verso.Output.Html :=
+  {{<span class="stemma-central-mark"
+        title="Central: part of what the library claims, signed by a person">"◆"</span>
+    <span class="stemma-signature" data-stemma-signature={{label}}></span>}}
+
+-- A mathematical environment.
+block_extension Block.environment (d : EnvData) where
+  data := toJson d
+  traverse id data _ := do
+    let .ok (d : EnvData) := fromJson? data | return none
+    let some label := d.label | return none
+    let ctxt ← read
+    -- Verso's tag finds the page; the anchor on it is the label itself.
+    discard <| externalTag id ctxt.path label
+    let target : EnvTarget := {
+      display := d.display, base := d.base, number := d.number, title := d.title
+      central := d.central, page := pageTitle ctxt }
+    modify fun st => st.saveDomainObject environmentDomain label id
+      |>.saveDomainObjectData environmentDomain label (toJson target)
+    if d.central then modify (addCentral · label)
+    if let some key := d.cited then modify (addCitation · key label)
+    return none
+  extraCss := [stemmaCss]
+  extraJs := [environmentJs]
   toTeX := some fun _ goB _ _ content => content.mapM goB
   toHtml :=
     open Verso.Output.Html in
     some fun _ goB _ data content => do
-      let .ok ((display, base, number, label, title, of) :
-          String × String × Option Nat × Option String × Option String × Option String) :=
-          fromJson? data
-        | pure .empty
-      let name := match number with
-        | some n => s!"{display} {n}"
-        | none => display
-      let name : Verso.Output.Html :=
-        if base == "proof" then {{<em>{{name}}</em>}} else {{<strong>{{name}}</strong>}}
-      let heading : Verso.Output.Html := match title with
-        | some t => {{{{name}}" (" {{t}} ")."}}
-        | none => {{{{name}}"."}}
-      let ofLink : Verso.Output.Html := match of with
-        | some target => {{" "<a class="stemma-proof-of" href={{s!"#{target}"}}>{{s!"of {target}"}}</a>}}
+      let .ok (d : EnvData) := fromJson? data | pure .empty
+      let st ← Doc.Html.HtmlT.state
+      let title : Verso.Output.Html := match d.title with
+        | some t => {{" (" {{t}} ")"}}
         | none => .empty
+      let heading ← if d.base == "proof" then do
+          let target := d.of.bind fun l => (envTarget? st l).map fun (href, t) => (t.name, href)
+          if d.of.isSome && !d.adjacent && target.isNone then
+            reportError s!"The proof of '{d.of.getD ""}' names an environment the site does not show."
+          let (words, link) := proofHeading d target
+          let link : Verso.Output.Html := match link with
+            | some (name, href) => {{<a href={{href}} title={{d.of.getD ""}}>{{name}}</a>}}
+            | none => .empty
+          pure {{<em class="stemma-proof-of">{{words}}{{link}}{{title}}"."</em>}}
+        else pure {{<strong>{{d.name}}</strong>{{title}}"."}}
+      let cited : Verso.Output.Html ← match d.cited with
+        | some key => do
+          pure {{" "<span class="stemma-cited">{{← citationHtml key d.locator}}</span>}}
+        | none => pure .empty
+      let side : Verso.Output.Html := match d.label with
+        | some label =>
+          let href := (envTarget? st label).map (·.1) |>.getD s!"#{label}"
+          let central := if d.central then centralHtml label else .empty
+          {{<span class="stemma-env-meta">{{central}}{{labelHtml label href}}</span>}}
+        | none => .empty
+      let classes := s!"stemma-env stemma-{d.base}" ++ (if d.central then " stemma-central" else "")
+      let attrs : Array (String × String) := match d.label with
+        | some label => #[("id", label), ("data-stemma-label", label)]
+        | none => #[]
       pure {{
-        <div class={{s!"stemma-env stemma-{base}"}} id={{label.getD ""}}>
-          <p class="stemma-env-heading">{{heading}}{{ofLink}}</p>
+        <div class={{classes}} {{attrs}}>
+          <p class="stemma-env-heading">{{side}}{{heading}}{{cited}}</p>
           {{← content.mapM goB}}
         </div>
       }}
@@ -162,6 +231,23 @@ def sourceOf (contents : TSyntaxArray `block) (lean : Bool) : DocElabM String :=
       parts := parts.push (String.Pos.Raw.extract text.source s e).trimAscii.toString
   return "\n\n".intercalate parts.toList
 
+/--
+Where the last environment of the current module ends, and its label: a proof
+that starts right after the environment it proves need not name it.
+-/
+initialize lastEnvironmentExt : EnvExtension (Option (Option String × String.Pos.Raw)) ←
+  registerEnvExtension (pure none)
+
+/--
+Whether a proof of `target` starting at `start` immediately follows it: the
+last environment is `target`, and only blank space lies between them.
+-/
+def followsDirectly (target : String) (start : String.Pos.Raw) : DocElabM Bool := do
+  let some (some label, stop) := lastEnvironmentExt.getState (← getEnv) | return false
+  if label != target || start.byteIdx < stop.byteIdx then return false
+  let between := String.Pos.Raw.extract (← getFileMap).source stop start
+  return between.all Char.isWhitespace
+
 /-- Checks the marks of an environment before its contents are elaborated. -/
 def checkMarks (base : BaseKind) (marks : Marks) : DocElabM Unit := do
   let env ← getEnv
@@ -176,8 +262,14 @@ def checkMarks (base : BaseKind) (marks : Marks) : DocElabM Unit := do
           there is no environment labelled '{target}'."
     unless r.base == .definition || r.base == .statement do
       throwError m!"A proof must name a definition or a statement, but '{target}' is a {r.base}."
-  if marks.cited.isSome && !(base == .definition || base == .statement) then
-    throwError "Only definitions and statements can be cited."
+  if let some cited := marks.cited then
+    unless base == .definition || base == .statement do
+      throwError "Only definitions and statements can be cited."
+    let (key, _) := BibTeX.splitCitation cited
+    if key.isEmpty then
+      throwError m!"The mark 'cited' names an entry of {referencesFile} by its key, \
+        optionally followed by a comma and where in it: \"Key2001, Prop. 3.4\"."
+    discard <| findReference key
 
 /-- Checks the declarations an environment added. -/
 def checkDecls (marks : Marks) (decls : Array Name) : DocElabM Unit := do
@@ -209,6 +301,9 @@ def expandEnvironment (name : Name) (display : String) (base : BaseKind) (marks 
     (contents : TSyntaxArray `block) : DocElabM Term := do
   let ref ← getRef
   checkMarks base marks
+  let adjacent ← match marks.of, ref.getPos? with
+    | some target, some start => followsDirectly target start
+    | _, _ => pure false
   let before := (← getEnv).constants.map₂
   let numbered := (recordExt.getState (← getEnv)).filter (·.base != .proof) |>.size
   let number := if base == .proof then none else some (numbered + 1)
@@ -240,11 +335,19 @@ def expandEnvironment (name : Name) (display : String) (base : BaseKind) (marks 
     lean := ← sourceOf contents (lean := true)
     module := env.mainModule
   })
+  if let some stop := ref.getTailPos? then
+    modifyEnv (lastEnvironmentExt.setState · (some (marks.label, stop)))
   let blocks ← if lean.isEmpty then pure prose else
     pure <| prose.push (← ``(Verso.Doc.Block.other Block.formalization #[$lean,*]))
-  ``(Verso.Doc.Block.other
-      (Block.environment $(quote display) $(quote base.toString) $(quote number)
-        $(quote marks.label) $(quote marks.title) $(quote marks.of))
+  let (cited, locator) := match marks.cited.map BibTeX.splitCitation with
+    | some (key, loc) => (some key, loc)
+    | none => (none, none)
+  `(Verso.Doc.Block.other
+      (Stemma.Block.environment ({
+        display := $(quote display), base := $(quote base.toString), number := $(quote number)
+        label := $(quote marks.label), title := $(quote marks.title)
+        central := $(quote marks.central), cited := $(quote cited), locator := $(quote locator)
+        of := $(quote marks.of), adjacent := $(quote adjacent) } : Stemma.EnvData))
       #[$blocks,*])
 
 /-- Expands a definition or a statement. -/

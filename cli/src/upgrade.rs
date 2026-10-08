@@ -12,7 +12,7 @@ use serde::Deserialize;
 use serde_json::json;
 use toml_edit::{Array, DocumentMut, Item, value};
 
-use crate::commands::{LEAN_TOOLCHAIN, STEMMA_GIT, mathlib_rev};
+use crate::commands::{LEAN_TOOLCHAIN, REFERENCES, STEMMA_GIT, mathlib_rev};
 use crate::config::Config;
 use crate::library::Library;
 use crate::{agents_md, templates, ui};
@@ -247,7 +247,7 @@ fn plan(library: &Library) -> Result<Plan> {
     let agents = agents_md::updated(files.agents.as_deref().unwrap_or_default())
         .or(files.agents.clone())
         .unwrap_or_else(|| agents_md::initial(&config.title));
-    let writes = vec![
+    let mut writes = vec![
         ("stemma.toml".to_string(), files.config.to_string()),
         (
             "lakefile.toml".to_string(),
@@ -260,6 +260,10 @@ fn plan(library: &Library) -> Result<Plan> {
         ),
         ("AGENTS.md".to_string(), agents),
     ];
+    // The library's references, empty, where it has none: its entries are people's.
+    if read(REFERENCES).is_none() {
+        writes.push((REFERENCES.to_string(), String::new()));
+    }
     let changed = writes
         .iter()
         .filter(|(file, text)| read(file).as_deref() != Some(text.as_str()))
