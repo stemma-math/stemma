@@ -68,7 +68,8 @@ The cosets of the subgroup partition the group, and all have its size.
   environment. Never change the label of a signed environment.
 - **`central`**: `true` or `false`, always explicit. Central environments are
   what the library claims; a person signs them. Write `central := false`
-  unless the person decided otherwise.
+  unless the person decided otherwise, and propose candidates for central
+  when you finish a block of work (see `stemma-mathematics`).
 - **`of`**: the label of the definition or statement a proof proves, already
   declared (above, or in an imported module).
 - **`cited`**: a reference in `references.bib`. The environment's obligations

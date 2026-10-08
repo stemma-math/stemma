@@ -38,13 +38,33 @@ pub struct Member {
     pub keys: Vec<String>,
 }
 
-/// Which changes need whose approval.
-#[derive(Debug, Default, Deserialize)]
+/// What the library requires of a change, beyond the specification.
+#[derive(Debug, Deserialize)]
 pub struct Policy {
+    /// Whether every central environment must carry a current signature for
+    /// `stemma check` to pass. On unless the group turns it off.
+    #[serde(default = "on")]
+    pub require_signed_central: bool,
     /// Kinds of change, and the roles whose approval they need.
     #[serde(default)]
     pub review: BTreeMap<String, Vec<String>>,
 }
+
+fn on() -> bool {
+    true
+}
+
+impl Default for Policy {
+    fn default() -> Self {
+        Self {
+            require_signed_central: true,
+            review: BTreeMap::new(),
+        }
+    }
+}
+
+/// The roles that sign or approve, whose members need keys.
+pub const ACTING_ROLES: &[&str] = &["signer", "maintainer"];
 
 impl Config {
     /// Reads `stemma.toml` from a library's directory.
@@ -58,6 +78,42 @@ impl Config {
     /// Parses the text of a `stemma.toml`.
     pub fn parse(text: &str) -> Result<Self> {
         Ok(toml::from_str(text)?)
+    }
+
+    /// The configuration at a revision of the library's repository (such as
+    /// the base a change is judged against), when it has one.
+    pub fn at(dir: &Path, rev: &str) -> Option<Self> {
+        let out = std::process::Command::new("git")
+            .args(["show", &format!("{rev}:./stemma.toml")])
+            .current_dir(dir)
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        Self::parse(&String::from_utf8_lossy(&out.stdout)).ok()
+    }
+
+    /// The configuration that judges a change against `base`: the base's,
+    /// when it has one, and the library's own otherwise (a library with no
+    /// `main` yet). A change cannot alter what judges it.
+    pub fn judging(dir: &Path, base: &str) -> Result<Self> {
+        match Self::at(dir, base) {
+            Some(config) => Ok(config),
+            None => Self::read(dir),
+        }
+    }
+
+    /// The members who sign or approve, by their roles, but have no key to do
+    /// it with.
+    pub fn keyless(&self) -> Vec<String> {
+        self.members
+            .iter()
+            .filter(|(_, m)| {
+                m.keys.is_empty() && m.roles.iter().any(|r| ACTING_ROLES.contains(&r.as_str()))
+            })
+            .map(|(name, _)| name.clone())
+            .collect()
     }
 
     /// The member who signs with `key`, if any.
@@ -123,6 +179,30 @@ policy = ["signer"]
         assert_eq!(c.review_roles("dependencies").unwrap(), ["maintainer"]);
         let opted_out = Config::parse(&format!("{CONFIG}dependencies = []\n")).unwrap();
         assert!(opted_out.review_roles("dependencies").is_none());
+    }
+
+    #[test]
+    fn signed_central_environments_are_required_unless_turned_off() {
+        assert!(Config::parse(CONFIG).unwrap().policy.require_signed_central);
+        let without_policy = &CONFIG[..CONFIG.find("[policy.review]").unwrap()];
+        assert!(
+            Config::parse(without_policy)
+                .unwrap()
+                .policy
+                .require_signed_central
+        );
+        let off = format!("{without_policy}[policy]\nrequire_signed_central = false\n");
+        assert!(!Config::parse(&off).unwrap().policy.require_signed_central);
+    }
+
+    #[test]
+    fn finds_members_who_act_without_keys() {
+        let c = Config::parse(&format!(
+            "{}carol = {{ roles = [\"reader\"] }}\n",
+            &CONFIG[..CONFIG.find("[policy.review]").unwrap()]
+        ))
+        .unwrap();
+        assert_eq!(c.keyless(), ["bob"]);
     }
 
     #[test]

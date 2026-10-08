@@ -17,6 +17,7 @@ done <<'EXPECTED'
 {"kind":"document","name":"StemmaTest.Even"}
 {"kind":"lean","name":"StemmaTest.Machinery"}
 "label":"even-add"
+"endLine":32,"label":"even-add"
 "state":"cited"
 "rootDocument":false
 "state":"notFormalized"

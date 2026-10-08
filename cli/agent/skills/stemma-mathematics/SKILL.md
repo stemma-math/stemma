@@ -32,6 +32,26 @@ description: How to do mathematics in a Stemma library — finding what exists, 
 6. **Check and commit**: `stemma check --json`, then commit with a
    mathematical message and the `Agent:` trailer.
 
+## Proposing what is central
+
+Central environments are what the library claims: a person signs each one.
+You never decide it, and you never mark anything central without the person's
+permission; but you do put the decision in front of them, so that "not
+central" never becomes the default by silence:
+
+- **When you finish a block of work** (a section, a module, a line of
+  results), and **before each `stemma share`**, give a short list of
+  candidates for central: for each, its label, one line on its role in the
+  library (a main theorem, a definition other results rest on, a result
+  others will cite), and your recommendation. Then let the person decide,
+  and change only what they approve.
+- **If the person already marks central environments in their own
+  contributions**, do not push: propose only when there is a strong
+  candidate they seem to have missed.
+- Good candidates: the main results of a module, definitions that the rest of
+  the library depends on, and statements that readings or papers will cite.
+  Helpers, technical lemmas and examples are not.
+
 ## Keep in mind
 
 - The library is the group's own: results stay in it. Do not propose moving

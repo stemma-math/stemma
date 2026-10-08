@@ -49,6 +49,17 @@ pub struct Record {
     pub lean: String,
     pub module: String,
     pub line: u32,
+    /// The line where the environment ends. Reports of older versions lack
+    /// it: the environment is then taken to be its first line.
+    #[serde(rename = "endLine", default)]
+    pub end_line: Option<u32>,
+}
+
+impl Record {
+    /// The lines of its module's source the environment spans.
+    pub fn lines(&self) -> (u32, u32) {
+        (self.line, self.end_line.unwrap_or(self.line).max(self.line))
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]

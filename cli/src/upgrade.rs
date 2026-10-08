@@ -67,7 +67,8 @@ fn remove_key(doc: &mut DocumentMut, table: &str, key: &str) {
     }
 }
 
-/// Gives the member `name` the key `key`, when that member has no keys.
+/// Gives the member `name` the key `key`, when that member has no keys (the
+/// field is missing, or empty).
 pub fn add_member_key(doc: &mut DocumentMut, name: &str, key: &str) {
     let Some(member) = doc
         .get_mut("members")
@@ -77,7 +78,10 @@ pub fn add_member_key(doc: &mut DocumentMut, name: &str, key: &str) {
     else {
         return;
     };
-    if member.get("keys").is_none() {
+    let empty = member
+        .get("keys")
+        .is_none_or(|k| k.as_array().is_some_and(Array::is_empty));
+    if empty {
         member.insert("keys", value(Array::from_iter([key])));
     }
 }
@@ -131,7 +135,32 @@ const MIGRATIONS: &[Migration] = &[
             remove_key(&mut files.config, "signatures", "distinct_from_author");
         },
     },
+    Migration {
+        version: (0, 4, 0),
+        description: "central environments must be signed: `[policy] require_signed_central \
+            = true`. Central environments already on main without a current signature now \
+            make `stemma check` fail until a signer signs them with `stemma sign`; \
+            `stemma status` lists them. A group that does not want this sets it to false, in \
+            a change a maintainer approves",
+        apply: |files, _| require_signed_central(&mut files.config),
+    },
 ];
+
+/// Writes `[policy] require_signed_central = true`, unless the library says
+/// already what it wants.
+fn require_signed_central(doc: &mut DocumentMut) {
+    let policy = doc
+        .entry("policy")
+        .or_insert_with(|| Item::Table(toml_edit::Table::new()));
+    if let Some(table) = policy.as_table_mut() {
+        table.set_implicit(false);
+    }
+    if let Some(table) = policy.as_table_like_mut()
+        && table.get("require_signed_central").is_none()
+    {
+        table.insert("require_signed_central", value(true));
+    }
+}
 
 /// The parts of a `lakefile.toml` that `stemma` writes from its choices.
 #[derive(Deserialize)]
@@ -379,8 +408,12 @@ mod tests {
 
     #[test]
     fn adds_a_key_to_a_member_without_one() {
-        let mut d = doc("[members]\nalice = { roles = [\"maintainer\"] }\nbob = { roles = [] }\n");
+        let mut d = doc(
+            "[members]\nalice = { roles = [\"maintainer\"] }\nbob = { roles = [] }\n\
+             dan = { roles = [\"signer\"], keys = [] }\n",
+        );
         add_member_key(&mut d, "alice", "ssh-ed25519 AAAA");
+        add_member_key(&mut d, "dan", "ssh-ed25519 DDDD");
         add_member_key(&mut d, "carol", "ssh-ed25519 CCCC");
         let c: toml::Value = toml::from_str(&d.to_string()).unwrap();
         assert_eq!(
@@ -388,6 +421,10 @@ mod tests {
             Some("ssh-ed25519 AAAA")
         );
         assert!(c["members"]["bob"].get("keys").is_none());
+        assert_eq!(
+            c["members"]["dan"]["keys"][0].as_str(),
+            Some("ssh-ed25519 DDDD")
+        );
         assert!(c["members"].get("carol").is_none());
     }
 
@@ -425,6 +462,28 @@ mod tests {
             );
             assert_eq!(twice.agents, once.agents, "{}", m.description);
         }
+    }
+
+    #[test]
+    fn signed_central_environments_become_required_explicitly() {
+        for (before, expected) in [
+            ("[library]\nname = \"T\"\n", true),
+            ("[policy.review]\npolicy = [\"signer\"]\n", true),
+            ("[policy]\nrequire_signed_central = false\n", false),
+        ] {
+            let mut d = doc(before);
+            require_signed_central(&mut d);
+            let c: toml::Value = toml::from_str(&d.to_string()).unwrap();
+            assert_eq!(
+                c["policy"]["require_signed_central"].as_bool(),
+                Some(expected),
+                "{d}"
+            );
+        }
+        let mut d = doc("[policy.review]\npolicy = [\"signer\"]\n");
+        require_signed_central(&mut d);
+        let c: toml::Value = toml::from_str(&d.to_string()).unwrap();
+        assert_eq!(c["policy"]["review"]["policy"][0].as_str(), Some("signer"));
     }
 
     #[test]

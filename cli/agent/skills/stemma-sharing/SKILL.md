@@ -17,7 +17,10 @@ description: How work is saved and shared in a Stemma library — the person's w
 ## Sharing
 
 Sharing is the only moment that looks at `main`. When the person wants their
-work to reach the library, commit everything and run:
+work to reach the library, first put the centrality decision in front of them
+(see `stemma-mathematics`, "Proposing what is central"): a short list of
+candidates among what the branch adds, unless they already decided. Then
+commit everything and run:
 
 ```sh
 stemma share --json
@@ -41,6 +44,9 @@ branch and opens or updates the pull request. Its answer says what happened:
   and ask them to run `stemma sign` in their own terminal; then share again.
 - `needs_others`: what only someone else can give. The pull request is open;
   tell the person whose signature or approval it waits for.
+- `new_environments`: how many definitions and statements the branch adds
+  (`count`, `labels`), and how many of them are central (`central`,
+  `central_labels`). Say it to the person in one line.
 
 If part of the work needs signatures and part does not, offer to split it into
 two pull requests, so that the second waits without holding back the first.

@@ -52,7 +52,10 @@ structure EnvRecord where
   /-- The source of its Lean blocks. -/
   lean : String
   module : Name
+  /-- The line where the environment starts in its module's source. -/
   line : Nat
+  /-- The line where it ends, its closing fence included. -/
+  endLine : Nat
   deriving Inhabited, Repr, ToJson, FromJson
 
 initialize recordExt : SimplePersistentEnvExtension EnvRecord (Array EnvRecord) ←

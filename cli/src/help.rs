@@ -14,7 +14,7 @@ pub const SECTIONS: &[(&str, &[&str])] = &[
         "See where you are",
         &["status", "check", "preview", "readback"],
     ),
-    ("Share and sign", &["share", "sign"]),
+    ("Share and sign", &["share", "sign", "key"]),
     ("Maintain", &["upgrade", "verify"]),
 ];
 

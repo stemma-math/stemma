@@ -49,6 +49,10 @@ struct Outcome {
     needs_you: Vec<String>,
     /// What the change lacks that only someone else can supply.
     needs_others: Vec<String>,
+    /// The definitions and statements the branch adds, and which of them are
+    /// central.
+    new: Vec<String>,
+    new_central: Vec<String>,
 }
 
 /// Opens the pull request from `branch` to `main`, or finds the open one.
@@ -114,6 +118,8 @@ fn share_branch(library: &Library, anyway: bool, json_output: bool) -> Result<Ou
         unsigned: Vec::new(),
         needs_you: Vec::new(),
         needs_others: Vec::new(),
+        new: Vec::new(),
+        new_central: Vec::new(),
     };
     git_ok(dir, &["fetch", "--quiet", "origin"])?;
     let has_main = git(dir, &["rev-parse", "--verify", "--quiet", "origin/main"])?
@@ -137,17 +143,26 @@ fn share_branch(library: &Library, anyway: bool, json_output: bool) -> Result<Ou
         }
         return Ok(outcome);
     }
-    let checks = commands::run_checks(library, json_output)?;
-    if !checks.ok() {
+    let checks = commands::run_checks(library, "origin/main", json_output)?;
+    // Signatures the policy requires are not a failure here: they are what
+    // the change lacks, said below, for the person or for others to give.
+    if !checks.ok_but_signatures() {
         outcome.checks = Some(checks);
         return Ok(outcome);
     }
     if let Some(report) = &checks.report {
+        let scope = crate::scope::Scope::of_branch(dir, "origin/main")?;
         for env in &report.environments {
+            let label = env.record.label.clone().unwrap_or_default();
             if env.signature(dir) == Some(Signature::Unsigned) {
-                outcome
-                    .unsigned
-                    .push(env.record.label.clone().unwrap_or_default());
+                outcome.unsigned.push(label.clone());
+            }
+            let claim = matches!(env.record.base.as_str(), "definition" | "statement");
+            if claim && scope.is_new(library, env) {
+                if env.record.central {
+                    outcome.new_central.push(label.clone());
+                }
+                outcome.new.push(label);
             }
         }
     }
@@ -188,7 +203,7 @@ fn share_branch(library: &Library, anyway: bool, json_output: bool) -> Result<Ou
 pub fn share(anyway: bool, json_output: bool) -> Result<bool> {
     let library = Library::find(Path::new("."))?;
     let o = share_branch(&library, anyway, json_output)?;
-    let checks_ok = o.checks.as_ref().is_some_and(Checks::ok);
+    let checks_ok = o.checks.as_ref().is_some_and(Checks::ok_but_signatures);
     let ok = o.conflicts.is_empty() && checks_ok && o.pushed;
     if json_output {
         let (problems, build) = o
@@ -202,6 +217,8 @@ pub fn share(anyway: bool, json_output: bool) -> Result<bool> {
             "pull_request": o.pull_request,
             "needs_you": o.needs_you, "needs_others": o.needs_others,
             "unsigned": o.unsigned,
+            "new_environments": { "count": o.new.len(), "labels": o.new,
+                "central": o.new_central.len(), "central_labels": o.new_central },
         });
         println!("{}", serde_json::to_string_pretty(&value)?);
         return Ok(ok);
@@ -230,6 +247,18 @@ pub fn share(anyway: bool, json_output: bool) -> Result<bool> {
             ui::error(p);
         }
         return Ok(false);
+    }
+    if !o.new.is_empty() {
+        ui::note(format!(
+            "This branch adds {} definitions and statements; {} of them central{}.",
+            o.new.len(),
+            o.new_central.len(),
+            if o.new_central.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", o.new_central.join(", "))
+            }
+        ));
     }
     if !o.pushed {
         ui::warning("Not shared yet: the pull request would lack what you can give it.");

@@ -8,3 +8,8 @@ stemma = "{{ version }}"
 {%- for member in members %}
 {{ member.name | tojson }} = { roles = ["maintainer", "signer"], keys = {{ member.keys | tojson }} }
 {%- endfor %}
+
+# What the library requires: every central environment carries a current
+# signature, or `stemma check` fails.
+[policy]
+require_signed_central = true

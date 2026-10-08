@@ -45,6 +45,7 @@ const PROTECTED: &[&str] = &[
 /// Shell commands agents may not run.
 const FORBIDDEN_COMMANDS: &[&str] = &[
     "stemma sign",
+    "stemma key",
     "git push --force",
     "git push -f",
     "git push --force-with-lease",
