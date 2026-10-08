@@ -19,7 +19,9 @@ description: How to do mathematics in a Stemma library — finding what exists, 
    - Mathlib conventions that change the meaning.
 2. **Write it in a document**: the environment, its prose, and its Lean with
    the statement and `sorry` as proof. Definitions must be complete: no
-   `sorry` in their data. Run `stemma check --json`.
+   `sorry` in their data. Run `stemma check --json`: it builds the library
+   (never run `lake build` yourself), and its `build` field says whether the
+   build passed (`"ok": true`) or gives Lean's errors (`"log"`).
 3. **Wait for the person to agree with central statements** before spending
    effort on their proofs, unless the proof is genuinely trivial.
 4. **Prove.** Put helpers the reader does not need outside environments, or

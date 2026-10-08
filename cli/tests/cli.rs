@@ -90,8 +90,9 @@ fn init_creates_the_layout() {
     let config = read(lib.join("stemma.toml"));
     assert!(config.contains("\"bob\" = { roles = [\"maintainer\", \"signer\"], keys = [] }"));
     let workflow = read(lib.join(".github/workflows/stemma.yml"));
-    assert!(workflow.contains("run: stemma verify"));
+    assert!(workflow.contains("run: stemma verify --no-build"));
     assert!(workflow.contains("fetch-depth: 0"));
+    assert!(config.contains("[site]\npublish = false\n"), "{config}");
     assert!(
         !workflow.contains("token"),
         "verifying must not need the forge"
@@ -207,15 +208,27 @@ fn upgrade_moves_an_old_library_to_this_version() {
     );
     let plan: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(plan["from"], "0.1.0");
-    // From 0.1.0: two migrations of 0.2.0, one of 0.3.0 and one of 0.4.0.
-    assert_eq!(plan["migrations"].as_array().unwrap().len(), 4);
+    // From 0.1.0: two migrations of 0.2.0, one of 0.3.0 and two of 0.4.0.
+    assert_eq!(plan["migrations"].as_array().unwrap().len(), 5);
     assert!(read(dir.join("stemma.toml")).contains("self_merge"));
 
+    // Without a terminal, it asks nothing, and says what follows: a
+    // maintainer's approval with `stemma sign`, which also re-signs what the
+    // new versions left stale, then sharing.
     let out = stemma(&dir, &["upgrade", "--no-update"]);
     assert!(
         out.status.success(),
         "{}",
         String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.contains("`stemma sign`, in a maintainer's terminal, to approve the upgrade"),
+        "{text}"
+    );
+    assert!(
+        text.contains("`stemma status` lists them); then `stemma share`"),
+        "{text}"
     );
     let config = read(dir.join("stemma.toml"));
     assert!(config.contains(&format!("stemma = \"{}\"", env!("CARGO_PKG_VERSION"))));
@@ -224,6 +237,8 @@ fn upgrade_moves_an_old_library_to_this_version() {
     assert!(!config.contains("merge_without_approval"));
     // 0.4.0 requires signed central environments, explicitly.
     assert!(config.contains("require_signed_central = true"), "{config}");
+    // 0.4.0 says explicitly that the site is not published.
+    assert!(config.contains("[site]\npublish = false"), "{config}");
     assert!(read(dir.join("AGENTS.md")).contains("Working in a Stemma library"));
     assert!(!read(dir.join("lean-toolchain")).contains("v4.20.0"));
     assert!(dir.join(".github/workflows/stemma.yml").is_file());
@@ -269,6 +284,9 @@ fn upgrade_on_main_goes_to_a_branch_of_its_own() {
     let branch = format!("upgrade/stemma-{}", env!("CARGO_PKG_VERSION"));
     assert_eq!(result["branch"], branch.as_str());
     assert_eq!(result["committed"], true);
+    let next = result["next"].as_str().unwrap();
+    assert!(next.starts_with("Next: `stemma sign`"), "{next}");
+    assert!(next.ends_with("then `stemma share`."), "{next}");
     assert_eq!(git(&dir, &["branch", "--show-current"]), branch);
     assert_eq!(
         git(&dir, &["rev-parse", "main"]),
@@ -558,12 +576,20 @@ impl Shared {
             &[],
         );
         assert!(out.status.success(), "{}", stderr(&out));
-        // A fake agent, so that starting one only chooses the branch.
+        // Fake agents, so that starting one only chooses the branch. Each
+        // records the session variable it got, and its arguments.
         let bin = shared.root.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
-        for agent in ["claude", "codex"] {
+        for agent in ["claude", "codex", "dsh", "opencode"] {
             let path = bin.join(agent);
-            std::fs::write(&path, "#!/bin/sh\nexit 0\n").unwrap();
+            std::fs::write(
+                &path,
+                format!(
+                    "#!/bin/sh\necho \"STEMMA_SESSION=$STEMMA_SESSION $*\" > \"{}\"\nexit 0\n",
+                    shared.root.join(format!("{agent}.started")).display()
+                ),
+            )
+            .unwrap();
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
@@ -1121,7 +1147,7 @@ fn init_and_upgrade_set_the_repository_up_and_say_what_to_set_by_hand() {
         "{text}"
     );
     assert!(
-        text.contains("requires the status check \"Stemma\""),
+        text.contains("requires the status checks \"Stemma verify\" and \"Stemma check\""),
         "{text}"
     );
 
@@ -1147,7 +1173,8 @@ fn fake_lake(dir: &Path) -> PathBuf {
     let lake = bin.join("lake");
     std::fs::write(
         &lake,
-        "#!/bin/sh\ncase \"$1\" in\n  build) exit 0 ;;\n  \
+        "#!/bin/sh\ncase \"$1\" in\n  \
+         build) [ -z \"$STEMMA_TEST_BUILD_FAILS\" ] || { echo \"$STEMMA_TEST_BUILD_FAILS\"; exit 1; } ;;\n  \
          exe) cp \"$STEMMA_TEST_REPORT\" \"$4\" ;;\n  *) exit 1 ;;\nesac\n",
     )
     .unwrap();
@@ -1295,6 +1322,9 @@ fn check_requires_central_environments_to_be_signed() {
     // Unsigned, it is a problem of `stemma check`, with its label and state.
     let c = check(&dir);
     assert_eq!(c["ok"], false, "{c}");
+    // The build passed, and says so: it is never `null`.
+    assert_eq!(c["build"]["ok"], true, "{c}");
+    assert!(c["build"]["seconds"].is_number(), "{c}");
     let problems = c["problems"].to_string();
     assert!(
         problems.contains("'even-add' is central and unsigned"),
@@ -1337,6 +1367,44 @@ fn check_requires_central_environments_to_be_signed() {
     // Once the base turns it off, nothing is required.
     git(&dir, &["update-ref", "refs/remotes/origin/main", "work"]);
     assert_eq!(check(&dir)["ok"], true);
+}
+
+#[test]
+fn check_reports_a_failed_build_with_its_log() {
+    let (dir, _, _) = library_of_alice("build-fails");
+    let bin = fake_lake(&dir);
+    let report = dir.join("report.json");
+    write_report(&report, &[]);
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let out = Command::new(env!("CARGO_BIN_EXE_stemma"))
+        .args(["check", "--json"])
+        .envs(IDENTITY)
+        .env("PATH", path)
+        .env("STEMMA_TEST_REPORT", &report)
+        .env(
+            "STEMMA_TEST_BUILD_FAILS",
+            "error: Alg/Even.lean:3:0: unknown identifier 'foo'",
+        )
+        .env_remove("STEMMA_SESSION")
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let c = json_of(&out);
+    assert_eq!(c["ok"], false, "{c}");
+    assert_eq!(c["build"]["ok"], false, "{c}");
+    assert!(
+        c["build"]["log"]
+            .as_str()
+            .unwrap()
+            .contains("unknown identifier 'foo'"),
+        "{c}"
+    );
+    assert!(c["build"].get("seconds").is_none(), "{c}");
 }
 
 #[test]
@@ -1687,5 +1755,481 @@ fn sign_separates_this_branch_from_others_and_signs_only_what_is_chosen() {
             .to_string()
             .contains("not signed with the key"),
         "{v}"
+    );
+}
+
+#[test]
+fn upgrade_in_a_terminal_lists_what_it_will_do_and_asks() {
+    let dir = scratch("upgrade-asks");
+    let out = stemma(
+        &dir,
+        &["init", ".", "--name", "Alg", "--no-git", "--no-mathlib"],
+    );
+    assert!(out.status.success(), "{}", stderr(&out));
+    let config = read(dir.join("stemma.toml")).replace(
+        &format!("stemma = \"{}\"", env!("CARGO_PKG_VERSION")),
+        "stemma = \"0.1.0\"",
+    );
+    std::fs::write(dir.join("stemma.toml"), &config).unwrap();
+    let run = || {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_stemma"));
+        command
+            .args(["upgrade", "--no-update", "--no-forge"])
+            .envs(IDENTITY)
+            .env_remove("STEMMA_SESSION")
+            .current_dir(&dir);
+        pty::Pty::spawn(command)
+    };
+    // Declining changes nothing.
+    let Some(mut upgrade) = run() else {
+        eprintln!("no pseudo-terminal here: skipped");
+        return;
+    };
+    upgrade.expect("Upgrade the library?");
+    assert!(upgrade.output().contains("From stemma 0.1.0"));
+    assert!(upgrade.output().contains("Write stemma.toml."));
+    upgrade.send("n");
+    let (ok, output) = upgrade.finish();
+    assert!(!ok, "{output}");
+    assert!(output.contains("Nothing was changed."), "{output}");
+    assert_eq!(read(dir.join("stemma.toml")), config);
+    // Accepting upgrades, and says what follows.
+    let mut upgrade = run().unwrap();
+    upgrade.expect("Upgrade the library?");
+    upgrade.send("y");
+    let (ok, output) = upgrade.finish();
+    assert!(ok, "{output}");
+    assert!(output.contains("`stemma sign`"), "{output}");
+    assert!(read(dir.join("stemma.toml")).contains(env!("CARGO_PKG_VERSION")));
+}
+
+/// `stemma agent <harness> --dry-run` in a new library: what it would run.
+fn dry_run(dir: &Path, harness: &str) -> serde_json::Value {
+    let out = Command::new(env!("CARGO_BIN_EXE_stemma"))
+        .args(["agent", harness, "--dry-run"])
+        .envs(IDENTITY)
+        .env_remove("STEMMA_SESSION")
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    json_of(&out)
+}
+
+#[test]
+fn every_harness_gets_the_equipment_and_the_session_variable() {
+    let dir = scratch("harnesses");
+    let out = stemma(&dir, &["init", ".", "--name", "Alg", "--no-mathlib"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let agent = dir.join(".stemma/agent");
+    let skills = [
+        "stemma-mathematics",
+        "stemma-documents",
+        "stemma-sharing",
+        "stemma-signatures",
+        "stemma-sources",
+    ];
+
+    // The neutral equipment, for any harness, and to equip one by hand.
+    let claude = dry_run(&dir, "claude");
+    assert!(
+        read(agent.join("equipment/instructions.md")).starts_with("# Working in a Stemma library")
+    );
+    for skill in skills {
+        assert!(
+            agent
+                .join(format!("equipment/skills/{skill}/SKILL.md"))
+                .is_file()
+        );
+    }
+    for harness in ["claude", "codex", "deepseek", "opencode"] {
+        let v = dry_run(&dir, harness);
+        assert_eq!(v["harness"], harness);
+        assert_eq!(v["env"]["STEMMA_SESSION"], "1", "{harness}: {v}");
+    }
+
+    // Claude Code: settings, a plugin with the skills, the instructions.
+    assert_eq!(claude["program"], "claude");
+    let args: Vec<&str> = claude["args"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a.as_str().unwrap())
+        .collect();
+    assert!(args.contains(&"--plugin-dir") && args.contains(&"--append-system-prompt-file"));
+    let settings: serde_json::Value =
+        serde_json::from_str(&read(agent.join("claude/settings.json"))).unwrap();
+    assert!(
+        settings["permissions"]["deny"]
+            .to_string()
+            .contains("Bash(stemma sign:*)")
+    );
+    assert_eq!(settings["env"]["STEMMA_SESSION"], "1");
+    for skill in skills {
+        assert!(
+            agent
+                .join(format!("claude/plugin/skills/{skill}/SKILL.md"))
+                .is_file()
+        );
+    }
+
+    // Codex: the instructions and the skills, inline.
+    let codex = dry_run(&dir, "codex");
+    assert_eq!(codex["program"], "codex");
+    let config = codex["args"][3].as_str().unwrap();
+    assert!(config.starts_with("developer_instructions="));
+    assert!(
+        config.contains("Working in a Stemma library") && config.contains("Saving and sharing")
+    );
+
+    // DeepSeek Harness: a patch layer with the instructions, skills and hooks.
+    let dsh = dry_run(&dir, "deepseek");
+    assert_eq!(dsh["program"], "dsh");
+    assert_eq!(dsh["args"][0], "web");
+    assert_eq!(dsh["args"][1], "--patch");
+    let patch_path = PathBuf::from(dsh["args"][2].as_str().unwrap());
+    let patch = read(patch_path.clone());
+    let patch: serde_json::Value =
+        serde_json::from_str(&patch[patch.find('[').unwrap()..]).unwrap();
+    assert!(
+        patch[0]["config"]["personaSuffix"]
+            .as_str()
+            .unwrap()
+            .contains("# Working in a Stemma library")
+    );
+    let skills_dir = PathBuf::from(patch[1]["config"]["customSkillDirs"][0].as_str().unwrap());
+    for skill in skills {
+        assert!(skills_dir.join(skill).join("SKILL.md").is_file());
+    }
+    let hooks: serde_json::Value = serde_json::from_str(&read(PathBuf::from(
+        patch[2]["insert"][0]["config"]["configPath"]
+            .as_str()
+            .unwrap(),
+    )))
+    .unwrap();
+    assert!(
+        hooks["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+            .as_str()
+            .unwrap()
+            .ends_with("hook pre-tool-use")
+    );
+    let out = Command::new(env!("CARGO_BIN_EXE_stemma"))
+        .args(["agent", "deepseek", "--dry-run", "--", "--profile", "tui"])
+        .envs(IDENTITY)
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    let v = json_of(&out);
+    assert_eq!(
+        v["args"],
+        serde_json::json!(["--patch", patch_path, "--profile", "tui"])
+    );
+
+    // OpenCode: its configuration, inline, with the instructions and the
+    // session's summary, the skills, and permissions.
+    let opencode = dry_run(&dir, "opencode");
+    assert_eq!(opencode["program"], "opencode");
+    let config: serde_json::Value =
+        serde_json::from_str(opencode["env"]["OPENCODE_CONFIG_CONTENT"].as_str().unwrap()).unwrap();
+    let instructions = read(PathBuf::from(config["instructions"][0].as_str().unwrap()));
+    assert!(instructions.starts_with("# Working in a Stemma library"));
+    assert!(instructions.contains("This session is equipped by stemma"));
+    let skills_dir = PathBuf::from(config["skills"]["paths"][0].as_str().unwrap());
+    for skill in skills {
+        assert!(skills_dir.join(skill).join("SKILL.md").is_file());
+    }
+    assert_eq!(config["permission"]["edit"]["signatures/*"], "deny");
+    assert_eq!(config["permission"]["bash"]["stemma sign *"], "deny");
+}
+
+#[test]
+fn harnesses_start_in_the_session_with_their_arguments() {
+    let s = Shared::new("harness-start");
+    git(&s.lib, &["switch", "--quiet", "--create", "work/alice"]);
+    for (harness, program) in [
+        ("deepseek", "dsh"),
+        ("opencode", "opencode"),
+        ("codex", "codex"),
+    ] {
+        let out = s.stemma(&s.lib, &["agent", harness, "--here", "--", "--extra"], &[]);
+        assert!(out.status.success(), "{}", stderr(&out));
+        let started = read(s.root.join(format!("{program}.started")));
+        assert!(started.starts_with("STEMMA_SESSION=1 "), "{started}");
+        assert!(started.trim_end().ends_with("--extra"), "{started}");
+    }
+    // The shortcuts start the same harnesses.
+    assert!(
+        s.stemma(&s.lib, &["claude", "--here"], &[])
+            .status
+            .success()
+    );
+    assert!(read(s.root.join("claude.started")).contains("--plugin-dir"));
+}
+
+/// `stemma hook <event>` in `dir`, with `input` on stdin.
+fn hook(dir: &Path, args: &[&str], input: &str) -> String {
+    use std::io::Write;
+    let mut child = Command::new(env!("CARGO_BIN_EXE_stemma"))
+        .args(args)
+        .envs(IDENTITY)
+        .current_dir(dir)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success());
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+#[test]
+fn hooks_give_the_summary_and_deny_protected_files_and_signing() {
+    let dir = scratch("hooks");
+    let out = stemma(&dir, &["init", ".", "--name", "Alg", "--no-mathlib"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let cwd = dir.display().to_string();
+    let call = |tool: &str, input: serde_json::Value| {
+        let call = serde_json::json!({ "tool_name": tool, "tool_input": input, "cwd": cwd });
+        hook(&dir, &["hook", "pre-tool-use"], &call.to_string())
+    };
+    let denied = |out: String| {
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["hookSpecificOutput"]["permissionDecision"], "deny", "{v}");
+    };
+    denied(call(
+        "write",
+        serde_json::json!({ "file_path": "stemma.toml", "content": "" }),
+    ));
+    denied(call(
+        "Edit",
+        serde_json::json!({ "file_path": format!("{cwd}/signatures/even.toml") }),
+    ));
+    denied(call(
+        "str_replace_editor",
+        serde_json::json!({ "command": "create", "path": ".github/x.yml" }),
+    ));
+    denied(call(
+        "bash",
+        serde_json::json!({ "command": "cd . && stemma sign even" }),
+    ));
+    denied(call(
+        "Bash",
+        serde_json::json!({ "command": "git push --force-with-lease" }),
+    ));
+    assert_eq!(
+        call("write", serde_json::json!({ "file_path": "Alg/Even.lean" })),
+        ""
+    );
+    assert_eq!(
+        call(
+            "str_replace_editor",
+            serde_json::json!({ "command": "view", "path": "stemma.toml" })
+        ),
+        ""
+    );
+    assert_eq!(
+        call(
+            "bash",
+            serde_json::json!({ "command": "stemma check --json" })
+        ),
+        ""
+    );
+    assert_eq!(
+        call("read", serde_json::json!({ "file_path": "stemma.toml" })),
+        ""
+    );
+
+    let plain = hook(&dir, &["hook", "session-start"], "");
+    assert!(plain.starts_with("This session is equipped by stemma"));
+    let v: serde_json::Value =
+        serde_json::from_str(&hook(&dir, &["--json", "hook", "session-start"], "")).unwrap();
+    assert_eq!(v["hookSpecificOutput"]["hookEventName"], "SessionStart");
+    assert!(
+        v["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap()
+            .contains("equipped by stemma")
+    );
+}
+
+#[test]
+fn check_validates_source_plans_and_status_shows_their_coverage() {
+    let (dir, _, _) = library_of_alice("sources");
+    let bin = fake_lake(&dir);
+    let report = dir.join("report.json");
+    let claim = Claim {
+        label: "even-add",
+        lines: (3, 8),
+        formal: "sha256:f",
+    };
+    write_report(&report, std::slice::from_ref(&claim));
+    std::fs::create_dir_all(dir.join("signatures")).unwrap();
+    std::fs::write(dir.join("signatures/even-add.toml"), signature_of(&claim)).unwrap();
+    std::fs::write(
+        dir.join("references.bib"),
+        "@book{Book, author = {A}, title = {T}, year = {2000}}\n",
+    )
+    .unwrap();
+    let book = dir.join("sources/book");
+    std::fs::create_dir_all(&book).unwrap();
+    std::fs::write(
+        book.join("source.toml"),
+        "title = \"The book\"\ncite = \"Book\"\nphase = \"initial\"\n\
+         scope = \"Chapter 1, every numbered result.\"\n",
+    )
+    .unwrap();
+    let chapter = "title = \"1. Even numbers\"\nowner = \"alice\"\n\n\
+         [[item]]\nref = \"Def. 1.1\"\nkind = \"definition\"\nstate = \"planned\"\n\n\
+         [[item]]\nref = \"Thm. 1.2\"\nkind = \"statement\"\nstate = \"done\"\n\
+         labels = [\"even-add\"]\ndepends = [\"Def. 1.1\"]\n\n\
+         [[item]]\nref = \"Thm. 1.3\"\nkind = \"statement\"\nstate = \"blocked\"\n\
+         reason = \"Needs Chapter 2.\"\nowner = \"bob\"\n";
+    std::fs::write(book.join("ch1.toml"), chapter).unwrap();
+    let check = || json_of(&stemma_built(&dir, &bin, &report, &["check", "--json"]));
+    assert_eq!(check()["ok"], true, "{}", check());
+
+    let status = json_of(&stemma_built(&dir, &bin, &report, &["status", "--json"]));
+    let source = &status["sources"][0];
+    assert_eq!(source["source"], "book", "{status}");
+    assert_eq!(source["phase"], "initial");
+    assert_eq!(source["items"], 3);
+    assert_eq!(source["done"], 1);
+    assert_eq!(source["proved"], 1);
+    assert_eq!(source["parts"][0]["part"], "ch1");
+    assert_eq!(source["parts"][0]["blocked"], 1);
+    assert_eq!(source["owners"][0]["owner"], "alice");
+    assert_eq!(source["owners"][1]["owner"], "bob");
+    let text = String::from_utf8_lossy(&stemma_built(&dir, &bin, &report, &["status"]).stdout)
+        .into_owned();
+    assert!(text.contains("Source: The book"), "{text}");
+    assert!(text.contains("3 items · 1 done (1 proved)"), "{text}");
+
+    // An unknown state, a label no environment has, a cycle.
+    std::fs::write(
+        book.join("ch1.toml"),
+        chapter
+            .replace(
+                "state = \"planned\"",
+                "state = \"started\"\ndepends = [\"Thm. 1.2\"]",
+            )
+            .replace("[\"even-add\"]", "[\"even-mul\"]"),
+    )
+    .unwrap();
+    let c = check();
+    assert_eq!(c["ok"], false);
+    let problems = c["problems"].to_string();
+    assert!(problems.contains("unknown state 'started'"), "{problems}");
+    assert!(
+        problems.contains("no environment has the label 'even-mul'"),
+        "{problems}"
+    );
+    assert!(problems.contains("form a cycle"), "{problems}");
+}
+
+/// The jobs of a workflow, by name, and their text.
+fn jobs(workflow: &str) -> Vec<(String, String)> {
+    let body = &workflow[workflow.find("\njobs:\n").unwrap() + 7..];
+    let mut jobs: Vec<(String, String)> = Vec::new();
+    for line in body.lines() {
+        if let Some(name) = line.strip_prefix("  ").and_then(|l| l.strip_suffix(':'))
+            && !name.starts_with(' ')
+        {
+            jobs.push((name.to_string(), String::new()));
+        } else if let Some((_, text)) = jobs.last_mut() {
+            text.push_str(line);
+            text.push('\n');
+        }
+    }
+    jobs
+}
+
+#[test]
+fn the_workflow_has_two_required_jobs_and_publishes_the_site_only_when_asked() {
+    let dir = scratch("workflow");
+    for (name, extra) in [("off", None), ("on", Some("--publish-site"))] {
+        let mut args = vec!["init", name, "--no-git", "--no-mathlib", "--yes"];
+        args.extend(extra);
+        let out = stemma(&dir, &args);
+        assert!(out.status.success(), "{}", stderr(&out));
+    }
+    let off = read(dir.join("off/.github/workflows/stemma.yml"));
+    let on = read(dir.join("on/.github/workflows/stemma.yml"));
+    assert!(read(dir.join("on/stemma.toml")).contains("[site]\npublish = true\n"));
+    for workflow in [&off, &on] {
+        let jobs = jobs(workflow);
+        let (_, verify) = &jobs[0];
+        let (_, check) = &jobs[1];
+        assert_eq!(jobs[0].0, "verify");
+        assert!(verify.contains("name: Stemma verify"));
+        assert!(verify.contains("run: stemma verify --no-build"));
+        assert!(!verify.contains("elan") && !verify.contains("lake"));
+        assert_eq!(jobs[1].0, "check");
+        assert!(check.contains("name: Stemma check"));
+        assert!(check.contains("run: stemma check"));
+        // Pull requests restore main's caches; only main saves them.
+        assert!(check.contains("actions/cache/restore@"));
+        assert!(check.contains("path: .lake/packages"));
+        assert!(check.contains("path: .lake/build"));
+        assert!(check.contains("lake build @stemma/Stemma @stemma/stemma-extract"));
+        let saves: Vec<&str> = check
+            .split("\n      - ")
+            .filter(|step| step.contains("actions/cache/save@"))
+            .collect();
+        assert_eq!(saves.len(), 2);
+        for step in saves {
+            assert!(step.contains("github.event_name == 'push'"), "{step}");
+        }
+        // Pull requests carry the site.
+        assert!(check.contains("stemma preview --no-serve"));
+        assert!(check.contains("actions/upload-artifact@"));
+        assert!(
+            workflow.contains("cancel-in-progress: ${{ github.event_name == 'pull_request' }}")
+        );
+    }
+    assert_eq!(jobs(&off).len(), 2);
+    assert!(!off.contains("deploy-pages") && !off.contains("upload-pages-artifact"));
+    let jobs = jobs(&on);
+    assert_eq!(jobs.len(), 3);
+    let (name, publish) = &jobs[2];
+    assert_eq!(name, "publish");
+    assert!(publish.contains("needs: check"));
+    assert!(publish.contains("if: github.event_name == 'push' && github.ref == 'refs/heads/main'"));
+    assert!(publish.contains("pages: write"));
+    assert!(publish.contains("actions/deploy-pages@"));
+    assert!(jobs[1].1.contains("actions/upload-pages-artifact@"));
+}
+
+#[test]
+fn a_library_that_publishes_its_site_sets_pages_up() {
+    let s = Shared::new("pages");
+    let config = read(s.lib.join("stemma.toml")).replace("publish = false", "publish = true");
+    std::fs::write(s.lib.join("stemma.toml"), config).unwrap();
+    std::fs::write(&s.forge, "{}").unwrap();
+    let out = s.stemma(
+        &s.lib,
+        &["upgrade", "--no-update", "--no-commit", "--json"],
+        &[],
+    );
+    assert!(out.status.success(), "{}", stderr(&out));
+    let state: serde_json::Value = serde_json::from_str(&read(s.forge.clone())).unwrap();
+    assert_eq!(
+        state["setup"],
+        serde_json::json!(["rules", "merge-commits", "pages"])
+    );
+    assert!(read(s.lib.join(".github/workflows/stemma.yml")).contains("actions/deploy-pages@"));
+
+    // When Pages cannot be enabled, it says what to set by hand.
+    std::fs::write(&s.forge, "{\"deny_setup\": true}").unwrap();
+    let out = s.stemma(&s.lib, &["upgrade", "--no-update", "--no-commit"], &[]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.contains("set the source to \"GitHub Actions\""),
+        "{text}"
     );
 }

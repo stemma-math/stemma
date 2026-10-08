@@ -144,7 +144,27 @@ const MIGRATIONS: &[Migration] = &[
             a change a maintainer approves",
         apply: |files, _| require_signed_central(&mut files.config),
     },
+    Migration {
+        version: (0, 4, 0),
+        description: "the site is published to GitHub Pages only when the library says so: \
+            `[site] publish = false` is written explicitly; a maintainer sets it to true, in a \
+            change of the policy",
+        apply: |files, _| site_publish(&mut files.config),
+    },
 ];
+
+/// Writes `[site] publish = false`, unless the library says already what it
+/// wants.
+fn site_publish(doc: &mut DocumentMut) {
+    let site = doc
+        .entry("site")
+        .or_insert_with(|| Item::Table(toml_edit::Table::new()));
+    if let Some(table) = site.as_table_like_mut()
+        && table.get("publish").is_none()
+    {
+        table.insert("publish", value(false));
+    }
+}
 
 /// Writes `[policy] require_signed_central = true`, unless the library says
 /// already what it wants.
@@ -234,6 +254,7 @@ fn plan(library: &Library) -> Result<Plan> {
         .find(|r| r.name == "stemma")
         .and_then(|r| r.path.clone());
     let mathlib = lakefile.require.iter().any(|r| r.name == "mathlib");
+    let publish = Config::parse(&files.config.to_string()).is_ok_and(|c| c.site.publish);
     let context = json!({
         "name": config.name,
         "title": config.title,
@@ -243,6 +264,7 @@ fn plan(library: &Library) -> Result<Plan> {
         "stemma_path": stemma_path,
         "mathlib": mathlib,
         "mathlib_rev": mathlib_rev(),
+        "publish": publish,
     });
     let agents = agents_md::updated(files.agents.as_deref().unwrap_or_default())
         .or(files.agents.clone())
@@ -307,20 +329,84 @@ fn set_up_forge(dir: &Path, json_output: bool) -> Option<Vec<crate::forge::Outco
     Some(outcomes)
 }
 
+/// What follows an upgrade: the change needs a maintainer's approval, and the
+/// new versions of Lean or Mathlib may leave signatures stale. Signing does
+/// both; nothing is built to count what is stale.
+pub fn next_steps(committed: bool) -> String {
+    let commit = if committed {
+        ""
+    } else {
+        "commit the change; then "
+    };
+    format!(
+        "Next: {commit}`stemma sign`, in a maintainer's terminal, to approve the upgrade and \
+         re-sign what it left stale (`stemma status` lists them); then `stemma share`."
+    )
+}
+
+/// Says one line of `stemma upgrade`, in the style of the session.
+fn say(interactive: bool, kind: Line, text: &str) {
+    match (interactive, kind) {
+        (true, Line::Success) => drop(cliclack::log::success(text)),
+        (true, Line::Warning) => drop(cliclack::log::warning(text)),
+        (false, Line::Success) => ui::success(text),
+        (false, Line::Warning) => ui::warning(text),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Line {
+    Success,
+    Warning,
+}
+
+/// Options of `stemma upgrade`.
+pub struct Options {
+    /// Show what would change without changing anything.
+    pub dry_run: bool,
+    /// Update the dependencies (`lake update`).
+    pub update: bool,
+    /// Commit the upgrade.
+    pub commit: bool,
+    /// Set the group's repository up on the forge.
+    pub forge: bool,
+    /// Ask nothing: upgrade.
+    pub yes: bool,
+}
+
 /// `stemma upgrade`. On `main`, the upgrade goes to a branch of its own; it is
-/// committed unless `commit` is false, ready to share. Unless `forge` is false,
-/// it also sets the group's repository up on the forge.
-pub fn upgrade(
-    dry_run: bool,
-    update: bool,
-    commit: bool,
-    forge: bool,
-    json_output: bool,
-) -> Result<bool> {
+/// committed unless told otherwise, ready to share. Unless told otherwise, it
+/// also sets the group's repository up on the forge. In a terminal, it lists
+/// what it will do and asks first.
+pub fn upgrade(options: Options, json_output: bool) -> Result<bool> {
+    let Options {
+        dry_run,
+        update,
+        commit,
+        forge,
+        yes,
+    } = options;
     let library = Library::find(Path::new("."))?;
     let plan = plan(&library)?;
     let to = env!("CARGO_PKG_VERSION");
     let dir = &library.dir;
+    let interactive = crate::interact::Mode::detect(json_output, yes).interactive();
+    if interactive && !dry_run && !plan.changed.is_empty() {
+        crate::interact::intro("upgrade")?;
+        let mut lines: Vec<String> = plan.migrations.iter().map(|m| format!("- {m}.")).collect();
+        lines.extend(plan.changed.iter().map(|f| format!("- Write {f}.")));
+        if update {
+            lines.push("- Update the dependencies (`lake update`).".into());
+        }
+        cliclack::note(
+            format!("From stemma {} to {to}", plan.from),
+            lines.join("\n"),
+        )?;
+        if !crate::interact::confirm("Upgrade the library?", true)? {
+            crate::interact::outro_cancel("Nothing was changed.")?;
+            return Ok(false);
+        }
+    }
     let in_git = crate::branches::current(dir).is_some();
     let mut branch = crate::branches::current(dir);
     if !dry_run && !plan.changed.is_empty() && branch.as_deref() == Some("main") {
@@ -372,67 +458,79 @@ pub fn upgrade(
     } else {
         None
     };
+    let next = (!dry_run && !plan.changed.is_empty()).then(|| next_steps(committed));
     if json_output {
         let value = json!({
             "from": plan.from, "to": to, "dry_run": dry_run,
             "migrations": plan.migrations, "changed": plan.changed, "updated": updated,
-            "branch": branch, "committed": committed, "forge": forge,
+            "branch": branch, "committed": committed, "forge": forge, "next": next,
         });
         println!("{}", serde_json::to_string_pretty(&value)?);
         return Ok(updated != Some(false));
     }
-    let say = |ok: bool, text: &str| {
-        if ok {
-            ui::success(text);
-        } else {
-            ui::warning(text);
+    let report_forge = |outcomes: &Option<Vec<crate::forge::Outcome>>| {
+        if let Some(outcomes) = outcomes {
+            crate::forge::report(outcomes, |ok, text| {
+                say(
+                    interactive,
+                    if ok { Line::Success } else { Line::Warning },
+                    text,
+                )
+            });
         }
     };
     if plan.changed.is_empty() {
-        ui::success(format!("The library already uses stemma {to}."));
-        if let Some(outcomes) = &forge {
-            crate::forge::report(outcomes, say);
-        }
+        say(
+            interactive,
+            Line::Success,
+            &format!("The library already uses stemma {to}."),
+        );
+        report_forge(&forge);
         return Ok(true);
     }
     let verb = if dry_run { "Would upgrade" } else { "Upgraded" };
-    ui::success(format!(
-        "{verb} the library from stemma {} to {to}.",
-        plan.from
-    ));
-    let (migrated, changed) = if dry_run {
-        ("Would migrate", "Would change")
-    } else {
-        ("Migrated", "Changed")
-    };
-    for m in &plan.migrations {
-        ui::note(format!("{migrated}: {m}."));
+    say(
+        interactive,
+        Line::Success,
+        &format!("{verb} the library from stemma {} to {to}.", plan.from),
+    );
+    if !interactive {
+        let (migrated, changed) = if dry_run {
+            ("Would migrate", "Would change")
+        } else {
+            ("Migrated", "Changed")
+        };
+        for m in &plan.migrations {
+            ui::note(format!("{migrated}: {m}."));
+        }
+        for f in &plan.changed {
+            ui::note(format!("{changed} {f}."));
+        }
     }
-    for f in &plan.changed {
-        ui::note(format!("{changed} {f}."));
-    }
-    if let Some(outcomes) = &forge {
-        crate::forge::report(outcomes, say);
-    }
+    report_forge(&forge);
     match updated {
-        Some(true) => ui::success("Updated the dependencies."),
-        Some(false) => ui::warning("Could not update the dependencies: run `lake update`."),
+        Some(true) => say(interactive, Line::Success, "Updated the dependencies."),
+        Some(false) => say(
+            interactive,
+            Line::Warning,
+            "Could not update the dependencies: run `lake update`.",
+        ),
         None => {}
     }
     if committed {
-        ui::success(format!(
-            "Committed it on the branch {}.",
-            ui::bold(branch.as_deref().unwrap_or_default())
-        ));
-        ui::note(
-            "Next: `stemma check`, then `stemma share`. New versions of Lean or Mathlib can \
-             leave signatures stale: `stemma status` shows them.",
+        say(
+            interactive,
+            Line::Success,
+            &format!(
+                "Committed it on the branch {}.",
+                ui::bold(branch.as_deref().unwrap_or_default())
+            ),
         );
-    } else if !dry_run {
-        ui::note(
-            "Next: `stemma check`, commit, and share the change as one pull request. New \
-             versions of Lean or Mathlib can leave signatures stale: `stemma status` shows them.",
-        );
+    }
+    match (&next, interactive) {
+        (Some(next), true) => crate::interact::outro(next)?,
+        (Some(next), false) => ui::note(next),
+        (None, _) => {}
     }
     Ok(updated != Some(false))
 }
@@ -531,6 +629,19 @@ mod tests {
         require_signed_central(&mut d);
         let c: toml::Value = toml::from_str(&d.to_string()).unwrap();
         assert_eq!(c["policy"]["review"]["policy"][0].as_str(), Some("signer"));
+    }
+
+    #[test]
+    fn the_site_is_not_published_unless_the_library_says_so() {
+        for (before, expected) in [
+            ("[library]\nname = \"T\"\n", false),
+            ("[site]\npublish = true\n", true),
+        ] {
+            let mut d = doc(before);
+            site_publish(&mut d);
+            let c: toml::Value = toml::from_str(&d.to_string()).unwrap();
+            assert_eq!(c["site"]["publish"].as_bool(), Some(expected), "{d}");
+        }
     }
 
     #[test]

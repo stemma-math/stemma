@@ -15,6 +15,16 @@ pub struct Config {
     pub members: BTreeMap<String, Member>,
     #[serde(default)]
     pub policy: Policy,
+    #[serde(default)]
+    pub site: Site,
+}
+
+/// The `[site]` table.
+#[derive(Debug, Default, Deserialize)]
+pub struct Site {
+    /// Whether the workflow publishes the site to GitHub Pages from `main`.
+    #[serde(default)]
+    pub publish: bool,
 }
 
 /// The `[library]` table.

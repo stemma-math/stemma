@@ -14,13 +14,14 @@ const END: &str = "<!-- stemma: end -->";
 
 /// The block `stemma` keeps in `AGENTS.md`.
 pub fn block() -> String {
+    let title = crate::agent::INSTRUCTIONS_TITLE;
     format!(
         "{BEGIN}\n\
 IMPORTANT. This is a Stemma library. Before your first answer or action, check\n\
-that your instructions include a section titled \"Working in a Stemma library\".\n\
+that your instructions include a section titled \"{title}\".\n\
 If they do not, you were not started through `stemma`: do not start the task.\n\
-Tell the person, and ask them to start you again with `stemma claude` or\n\
-`stemma codex`.\n\
+Tell the person, and ask them to start you again with `stemma agent <harness>`\n\
+(`claude`, `codex`, `deepseek` or `opencode`).\n\
 {END}"
     )
 }

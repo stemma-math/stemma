@@ -29,6 +29,8 @@ library's Lean name, for example `Algebra`.
 │   └── <label>.toml
 ├── readings/              # curated readings: guides, papers (reserved)
 │   └── <reading>/
+├── sources/               # plans for formalizing existing sources
+│   └── <source>/          # source.toml, and one <part>.toml per part
 ├── .github/               # the forge's checks and rules (GitHub)
 ├── AGENTS.md              # the group's instructions for agents
 ├── README.md
@@ -46,6 +48,7 @@ Who writes each entry:
 | `references.bib` | agents; every entry checked by a person |
 | `signatures/` | the signing step only, never an agent |
 | `readings/` | agents, and people who want to |
+| `sources/` | agents, and people who want to |
 | `AGENTS.md` | the group, except a block at its top that `stemma` writes |
 | `.github/`, `.gitignore` | `stemma` only |
 
@@ -122,11 +125,59 @@ state (§3) when the site has it: `stemma preview` writes it, computed from
 `signatures/`, to `stemma-state.json` beside the pages. A site built without
 that file shows the marks and no state.
 
+### Source plans
+
+When a library formalizes an existing source (a book it builds on, a paper,
+notes), `sources/` holds the plan, versioned with the library so that the
+group shares one view of what is covered, by whom. Each source is a directory
+`sources/<source>/` with a `source.toml` and one file per part of the source
+(a chapter, say), so that members working on different parts do not
+conflict:
+
+```toml
+# sources/burris/source.toml
+title = "A Course in Universal Algebra"
+cite = "BurrisSankappanavar"   # optional: its key in references.bib
+phase = "initial"              # planning, initial or ended
+scope = "Chapters I and II: every numbered definition and result; no exercises."
+reuse = "Mathlib's lattices; the library's own algebras."   # optional
+conventions = "Operations are `Fin n → α → α`."             # optional
+```
+
+```toml
+# sources/burris/ch2.toml
+title = "II. The elements of universal algebra"
+owner = "alice"                # optional: the owner of its items, unless they say
+
+[[item]]
+ref = "Thm. II.3.5"            # where in the source; unique in the source
+kind = "statement"             # definition, statement, proof, remark, notation, example or exercise
+state = "blocked"              # planned, in-progress, done, blocked or excluded
+owner = "bob"                  # a member
+labels = ["burris.hom-thm"]    # the environments that cover it
+depends = ["Def. II.1.1"]      # refs of items of the same source
+reason = "Needs Thm. I.4.12, which is out of scope."   # for blocked and excluded
+```
+
+- The `phase` says where the group is: agreeing the plan (`planning`),
+  formalizing the source, part by part (`initial`), or done with that
+  (`ended`), which the group declares explicitly.
+- `stemma check` validates every plan, strictly: unknown fields, states,
+  kinds or phases are errors; an item `done` names its environments, which
+  must exist; one `blocked` or `excluded` says why; one `in-progress` has an
+  owner; owners are members (§1, "Configuration"); dependencies name items of
+  the same source and form no cycle; `cite` is a key of `references.bib`.
+- `stemma status` shows each source's coverage, by part and by owner: how
+  many items are planned, in progress, done, blocked or excluded, and how many
+  of those done are **proved**, that is, all their environments proved, with
+  no `sorry` and no accepted assumption. Coverage is never counted as proved
+  otherwise.
+
 ### Agent instructions are not copied into the library
 
 The rules, skills and permissions agents work with belong to the version of
 `stemma` the library uses, which loads them when it starts an agent
-(`stemma claude`, `stemma codex`). `AGENTS.md` holds the group's own
+(`stemma agent <harness>`). `AGENTS.md` holds the group's own
 instructions, and a block that `stemma` keeps at its top so that an agent
 started without `stemma` notices it (§5).
 
@@ -158,6 +209,9 @@ alice = { roles = ["maintainer", "signer"], keys = ["ssh-ed25519 AAAA…"] }
 require_signed_central = true   # every central environment is signed (§3)
 
 [policy.review]             # optional (§4)
+
+[site]
+publish = false             # whether the site is published from main (§4, "Forges")
 ```
 
 - A member is who signs with one of their **keys**: the SSH public keys listed
@@ -171,6 +225,10 @@ require_signed_central = true   # every central environment is signed (§3)
   current signature (§3). It is on unless the group turns it off: `stemma
   init` writes it, and so does `stemma upgrade` in libraries made before it
   existed. Like the rest of the policy, it is read from `main`.
+- `[site] publish` says whether the forge publishes the library's site from
+  `main` (§4, "Forges"). It is off unless the group turns it on: `stemma init`
+  asks, and `stemma upgrade` writes it, off, in libraries made before it
+  existed.
 
 ### Not committed
 
@@ -584,7 +642,7 @@ checks.
 - Each person works on branches of their own: `work/<person>` by default, or
   `work/<person>-<topic>` for a separate piece of work. A working branch is
   never `work/<person>/<topic>`: git cannot hold `work/<person>` beside it.
-- Starting an agent (`stemma claude`, `stemma codex`) asks which branch to
+- Starting an agent (`stemma agent <harness>`) asks which branch to
   work on: the current branch first (unless it is `main`), then the person's
   other working branches with their state (commits ahead of `main`, an open or
   merged pull request, uncommitted changes), then a new branch. It never
@@ -674,6 +732,11 @@ checks.
 | On every push | The forge, at once | Protected files and layout |
 | On a pull request | Required checks | Everything, on `main` with the pull request applied: the build, the rules of this specification, and signatures. This is what guarantees |
 
+`stemma check` builds the library itself, so an agent never runs Lake on its
+own. Its JSON output always says how the build went: `"build": {"ok": true,
+"seconds": …}` when it passes, and `"build": {"ok": false, "log": "…"}`, with
+Lean's errors, when it fails.
+
 A pull request that would leave a central environment unsigned (under the
 default policy) or a signed one stale says which signatures it needs, label by
 label, and is not merged until they are added to it. `stemma check` reports
@@ -731,42 +794,88 @@ The first forge Stemma supports is GitHub:
 |---|---|
 | `main` changes only through pull requests | A ruleset on `main`: pull requests required, no direct or forced pushes, no deletion |
 | Merge commits only | The repository allows merge commits, and neither squash nor rebase merging |
-| Required checks | A GitHub Actions workflow written by `stemma` (`.github/workflows/stemma.yml`) that runs `stemma check` and `stemma verify`; its check, `Stemma`, is required by the ruleset (without requiring branches to be up to date, which would make the forge commit on share branches) |
+| Required checks | A GitHub Actions workflow written by `stemma` (`.github/workflows/stemma.yml`) with two jobs, both required by the ruleset (without requiring branches to be up to date, which would make the forge commit on share branches): `Stemma verify`, which runs `stemma verify --no-build` and needs only the history and `stemma`, so that a signature problem is reported within a minute; and `Stemma check`, which runs `stemma check` |
 | Signatures and approvals | Signed commits, checked by `stemma verify` with git against the members' keys: GitHub's reviews play no part |
-| The library's site | GitHub Pages, published from `main` by the same workflow |
+| The library's site | Pull requests carry the built site (`stemma preview --no-serve`) as a downloadable artifact, and nothing is deployed from them. When `[site] publish` is on, the same workflow builds the site on every push to `main` and publishes it to GitHub Pages |
 
 - The checks run without secrets: `stemma verify` reads only the repository,
   so it gives the same answer on GitHub, on any other forge, and on a
   person's machine.
-- Builds cache `.lake` between runs.
-- `stemma` sets the repository up (rules, required check, merge commits only,
-  workflow, Pages) when it creates the library, and `stemma upgrade` applies
-  the same setup to existing libraries. When the forge's command line is
-  missing or lacks permission, it says exactly what to set by hand, and the
-  rest goes on.
+- Builds cache what `main` built, so that a pull request builds only the
+  library's own modules that changed: the dependencies (Stemma's Lean
+  package, Verso, Mathlib and theirs) under `.lake/packages`, keyed by the
+  toolchain and `lake-manifest.json`, and the library's build under
+  `.lake/build`. Only runs on `main` save caches, and they save them even when
+  a check fails, so that pull requests, which can read `main`'s caches, never
+  evict them.
+- `stemma` sets the repository up (rules, required checks, merge commits only,
+  workflow, and Pages when the site is published) when it creates the
+  library, and `stemma upgrade` applies the same setup to existing libraries.
+  When the forge's command line is missing or lacks permission (or, for
+  Pages, the plan does not allow it), it says exactly what to set by hand, and
+  the rest goes on.
 - Everything `stemma` asks of a forge (who the person is, finding and opening
   pull requests, setting the repository up) goes through one part of it, so
   that other forges can be supported.
 
 ## 5. Agents
 
-- `stemma claude` and `stemma codex` start the agent in the library with the
-  instructions, skills and permissions of the library's `stemma` version. They
-  synchronize nothing.
+- `stemma agent <harness>` starts an agent harness in the library with the
+  instructions, skills and permissions of the library's `stemma` version.
+  It synchronizes nothing. The harnesses are Claude Code (`claude`), Codex
+  (`codex`), DeepSeek Harness (`deepseek`) and OpenCode (`opencode`);
+  `stemma claude` and `stemma codex` are shortcuts.
+- **The equipment is neutral.** It is written once: the system instructions,
+  the skills, the summary a session starts with, the files only `stemma`
+  writes and the commands an agent may not run. Each harness gets a thin
+  adapter that installs it the way that harness reads it, in
+  `.stemma/agent/<harness>/`, written anew at each start; the neutral form is
+  in `.stemma/agent/equipment/` (`instructions.md`, and `skills/<name>/SKILL.md`).
+  No adapter writes outside the library's `.stemma/`, nor hides the person's
+  own instructions to their harness: Claude Code gets the instructions
+  appended to its system prompt, Codex and OpenCode in their configuration,
+  and DeepSeek Harness in its system prompt, through a configuration patch
+  passed when it starts.
 - **When a session starts**, the agent gets a short summary that costs no
   build: the branch, uncommitted changes, and work not yet in `main`. Claude
-  Code gets it from a hook passed when `stemma` starts it, so it is given
-  again when a session resumes; Codex, which runs hooks only once a person
-  trusts them, gets it in its instructions.
+  Code and DeepSeek Harness get it from a hook passed when `stemma` starts
+  them, so it is given again when a session resumes; Codex, which runs hooks
+  only once a person trusts them, and OpenCode, which has no such hook, get it
+  in their instructions, as it was when `stemma` started them.
+- **What makes an agent started through `stemma`** is two things, which a
+  person can also give a harness `stemma` does not support:
+  1. its instructions contain the section titled "Working in a Stemma
+     library": the text of `.stemma/agent/equipment/instructions.md`
+     (`stemma agent <harness> --dry-run` writes it), with the skills of
+     `.stemma/agent/equipment/skills/` available to it, or appended;
+  2. every process it runs has the environment variable `STEMMA_SESSION`
+     set, under which `stemma sign` and `stemma key` refuse to run and no
+     command asks questions.
 - **Agents started without `stemma`** notice it. `AGENTS.md`, which every
   agent reads, begins with a block `stemma` writes: an equipped agent's
   instructions contain the section that block names, and an agent whose
   instructions do not must tell the person, before doing anything else, to
-  start it again through `stemma`. `stemma` keeps the block current, and
-  `stemma check` fails when it is missing.
+  start it again with `stemma agent <harness>`. `stemma` keeps the block
+  current, and `stemma check` fails when it is missing.
 - **Permissions.** The agent may not write the files only `stemma` writes
   (§1), nor `signatures/`; it may not run `stemma sign` or `stemma key`, push
-  to `main` or force a push.
+  to `main` or force a push. Its instructions say so to every harness, and
+  `STEMMA_SESSION` keeps `stemma sign` and `stemma key` from running under
+  every harness. Beyond that, each harness enforces what it can:
+
+  | Harness | Protected files | Forbidden commands |
+  |---|---|---|
+  | Claude Code | Denied by its permission rules (`Edit(…)`), and by a `PreToolUse` hook | Denied by its permission rules (`Bash(…)`), and by the hook |
+  | DeepSeek Harness | Denied by a `PreToolUse` hook, run through its bridge for Claude Code hooks, for its file tools (`write`, `edit`, `str_replace_editor`) | Denied by the same hook, for its `bash` tool |
+  | OpenCode | Denied by its `edit` permission, which covers every tool that writes files | Denied by its `bash` permission |
+  | Codex | Not enforced: its sandbox (`workspace-write`) has no rules for single files | Not enforced: `stemma` gives Codex no command rules |
+
+  None of them stops a shell command that writes a protected file (`echo >
+  stemma.toml`), and the command rules match commands by their text: they
+  guard against shortcuts, not against an agent set on evading them. What
+  guarantees is elsewhere: `stemma verify` accepts signatures only in commits
+  signed with a signer's key (§3), and changes to the files only `stemma`
+  writes need a maintainer's approval (§4).
 - **Centrality.** The agent never marks an environment central without the
   person's permission. Before each sharing, and when it finishes a block of
   work, it gives the person a short list of candidates for central, with their
@@ -780,8 +889,12 @@ The first forge Stemma supports is GitHub:
   ```
 
 - **Skills** teach the agent to write documents and environments, create
-  modules, share work, resolve conflicts, prepare signatures and ask for
-  read-backs.
+  modules, share work, resolve conflicts, prepare signatures, ask for
+  read-backs, and formalize a source faithfully, alone or as a group, with
+  its plan (§1, "Source plans"): the scope and the reuse of Mathlib agreed
+  once with the person, work in batches without asking to continue after each
+  one, and questions only for decisions that change meaning, ambiguities of
+  the source, missing hypotheses or blocking dependencies.
 
 ## 6. Command line
 
@@ -790,16 +903,16 @@ The first forge Stemma supports is GitHub:
 | `stemma init` | Creates a library: layout, `stemma.toml`, dependencies, git and its remote; in a terminal it asks what it needs |
 | `stemma new` | Creates a module (document or Lean) and adds it to the table of contents |
 | `stemma check` | Runs every check of this specification |
-| `stemma status` | Shows states: not formalized, pending, signatures, distance from `main` |
+| `stemma status` | Shows states: not formalized, pending, signatures, distance from `main`, and the coverage of source plans |
 | `stemma preview` | Builds the site and serves it locally |
 | `stemma share` | Shares the working branch through its share branch: brings `main` in, and opens or updates the pull request |
 | `stemma remote` | Shows or sets the personal remote working branches are saved to |
-| `stemma upgrade` | Moves the library to this version of `stemma`: migrations, the files only `stemma` writes, and the dependencies |
+| `stemma upgrade` | Moves the library to this version of `stemma`: migrations, the files only `stemma` writes, and the dependencies. In a terminal it lists the migrations and asks first (`--yes` does not ask); it ends saying what follows: `stemma sign`, by a maintainer, to approve the upgrade and re-sign what it left stale (`stemma status` lists them), then `stemma share` |
 | `stemma verify` | Whether a change carries the signatures and approvals it needs, from git alone |
 | `stemma sign` | Signs environments and approves changes, in an interactive terminal; `stemma sign <labels…>` only those |
 | `stemma key add` | Registers the key a member signs with, on a branch, for a maintainer to approve |
 | `stemma readback` | Makes read-backs and serves a local page for a person to read and mark them |
-| `stemma claude`, `stemma codex` | Start an equipped agent |
+| `stemma agent <harness>` | Starts an equipped agent harness: `claude`, `codex`, `deepseek` or `opencode` (`stemma claude` and `stemma codex` are shortcuts) |
 
 Every command has a `--json` output for agents.
 

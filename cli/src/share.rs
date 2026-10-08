@@ -833,7 +833,9 @@ pub fn share(options: Options, json_output: bool) -> Result<bool> {
         let (problems, build) = o
             .checks
             .as_ref()
-            .map_or((vec![], None), |c| (c.problems.clone(), c.build.clone()));
+            .map_or((vec![], serde_json::Value::Null), |c| {
+                (c.problems.clone(), c.build_json())
+            });
         let value = json!({
             "ok": ok, "branch": o.branch, "share_branch": o.share,
             "moved_from_main": o.moved_from_main,

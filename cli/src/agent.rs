@@ -1,6 +1,25 @@
-//! Starting an equipped agent in a library: `stemma claude` and `stemma codex`.
+//! Starting an equipped agent in a library: `stemma agent <harness>`, and its
+//! shortcuts `stemma claude` and `stemma codex`.
+//!
+//! The **equipment** is the same for every harness, and written once, in a
+//! neutral form: the system instructions, the skills, the summary an agent
+//! gets when its session starts, the files it may not edit and the commands it
+//! may not run. Each harness gets a thin **adapter** (the submodules) that
+//! installs that equipment the way the harness reads it: instructions, skills,
+//! hooks or their equivalent, environment variables and permission rules.
+//! Every harness runs with [`SESSION_VARIABLE`] set, under which `stemma sign`
+//! and `stemma key` refuse to run.
+//!
+//! Choosing the branch to work on is not an adapter's business: it is
+//! [`crate::branches::choose`]'s.
 
-use std::path::{Path, PathBuf};
+mod claude;
+mod codex;
+mod deepseek;
+mod opencode;
+
+use std::io::Read;
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result};
@@ -8,11 +27,17 @@ use serde_json::json;
 
 use crate::library::Library;
 
-/// The instructions every agent works with.
-const INSTRUCTIONS: &str = include_str!("../agent/instructions.md");
+pub use crate::interact::SESSION_VARIABLE;
+
+/// The instructions every agent works with. Their first heading is the
+/// section the guard in `AGENTS.md` names.
+pub const INSTRUCTIONS: &str = include_str!("../agent/instructions.md");
+
+/// The title of the section an equipped agent's instructions contain.
+pub const INSTRUCTIONS_TITLE: &str = "Working in a Stemma library";
 
 /// The skills, as (name, `SKILL.md`).
-const SKILLS: &[(&str, &str)] = &[
+pub const SKILLS: &[(&str, &str)] = &[
     (
         "stemma-mathematics",
         include_str!("../agent/skills/stemma-mathematics/SKILL.md"),
@@ -29,10 +54,15 @@ const SKILLS: &[(&str, &str)] = &[
         "stemma-signatures",
         include_str!("../agent/skills/stemma-signatures/SKILL.md"),
     ),
+    (
+        "stemma-sources",
+        include_str!("../agent/skills/stemma-sources/SKILL.md"),
+    ),
 ];
 
-/// The files only `stemma` writes, which agents may not edit.
-const PROTECTED: &[&str] = &[
+/// The files only `stemma` writes, which agents may not edit, relative to the
+/// library: a file, or a directory and everything in it (`dir/**`).
+pub const PROTECTED: &[&str] = &[
     "stemma.toml",
     "lakefile.toml",
     "lake-manifest.json",
@@ -42,8 +72,8 @@ const PROTECTED: &[&str] = &[
     "signatures/**",
 ];
 
-/// Shell commands agents may not run.
-const FORBIDDEN_COMMANDS: &[&str] = &[
+/// Shell commands agents may not run, as prefixes.
+pub const FORBIDDEN_COMMANDS: &[&str] = &[
     "stemma sign",
     "stemma key",
     "git push --force",
@@ -53,19 +83,130 @@ const FORBIDDEN_COMMANDS: &[&str] = &[
     "git push origin HEAD:main",
 ];
 
-pub use crate::interact::SESSION_VARIABLE;
-
-/// The agents `stemma` can start.
-#[derive(Clone, Copy)]
-pub enum Agent {
+/// The harnesses `stemma` can start.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum Harness {
+    /// Claude Code.
     Claude,
+    /// Codex.
     Codex,
+    /// DeepSeek Harness (`dsh`).
+    Deepseek,
+    /// OpenCode.
+    Opencode,
+}
+
+impl Harness {
+    /// The name `stemma agent` takes.
+    pub fn name(self) -> &'static str {
+        match self {
+            Harness::Claude => "claude",
+            Harness::Codex => "codex",
+            Harness::Deepseek => "deepseek",
+            Harness::Opencode => "opencode",
+        }
+    }
+
+    /// The program that starts it.
+    pub fn program(self) -> &'static str {
+        match self {
+            Harness::Claude => "claude",
+            Harness::Codex => "codex",
+            Harness::Deepseek => "dsh",
+            Harness::Opencode => "opencode",
+        }
+    }
+}
+
+/// What an adapter gives the harness: arguments before the person's own, and
+/// environment variables besides [`SESSION_VARIABLE`].
+#[derive(Default)]
+pub struct Setup {
+    pub args: Vec<String>,
+    pub env: Vec<(String, String)>,
+}
+
+/// The equipment of a session in a library, which adapters install.
+pub struct Equipment<'a> {
+    pub library: &'a Library,
+}
+
+impl Equipment<'_> {
+    /// Where the files of a harness's session go: `.stemma/agent/<harness>/`,
+    /// written anew at each start.
+    pub fn dir(&self, harness: Harness) -> Result<PathBuf> {
+        let dir = self
+            .library
+            .dir
+            .join(".stemma")
+            .join("agent")
+            .join(harness.name());
+        std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+        Ok(dir)
+    }
+
+    /// Writes the neutral equipment, the instructions and the skills, to
+    /// `.stemma/agent/equipment/`, where a person can also take it to equip a
+    /// harness `stemma` does not support. Returns that directory.
+    pub fn write_neutral(&self) -> Result<PathBuf> {
+        let dir = self
+            .library
+            .dir
+            .join(".stemma")
+            .join("agent")
+            .join("equipment");
+        let skills = dir.join("skills");
+        if skills.exists() {
+            std::fs::remove_dir_all(&skills)?;
+        }
+        self.write_skills(&skills)?;
+        std::fs::write(dir.join("instructions.md"), INSTRUCTIONS)?;
+        Ok(dir)
+    }
+
+    /// Writes every skill to `<dir>/<name>/SKILL.md`, the layout every
+    /// harness that reads skills shares.
+    pub fn write_skills(&self, dir: &Path) -> Result<()> {
+        for (name, skill) in SKILLS {
+            let dir = dir.join(name);
+            std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+            std::fs::write(dir.join("SKILL.md"), skill)?;
+        }
+        Ok(())
+    }
+
+    /// The summary an agent gets when its session starts.
+    pub fn summary(&self) -> String {
+        session_summary(self.library)
+    }
+
+    /// The instructions and every skill as one text, for a harness that reads
+    /// no skills, followed by the session's summary.
+    pub fn inline_instructions(&self) -> String {
+        format!("{}\n\n{}", inline_instructions(), self.summary())
+    }
+}
+
+/// The instructions, then every skill without its front matter.
+fn inline_instructions() -> String {
+    let mut text = INSTRUCTIONS.to_string();
+    for (_, skill) in SKILLS {
+        let body = skill
+            .strip_prefix("---\n")
+            .and_then(|s| s.split_once("\n---\n"))
+            .map_or(*skill, |(_, body)| body);
+        text.push_str("\n\n");
+        text.push_str(body.trim());
+    }
+    text
 }
 
 /// A prepared command, before it is run.
 pub struct Launch {
     pub program: String,
     pub args: Vec<String>,
+    /// Environment variables, [`SESSION_VARIABLE`] among them.
+    pub env: Vec<(String, String)>,
     pub dir: PathBuf,
     pub branch: Option<String>,
 }
@@ -106,101 +247,12 @@ pub fn session_summary(library: &Library) -> String {
     lines.join("\n")
 }
 
-/// The command that runs this `stemma`, for hooks.
-fn this_stemma() -> String {
-    std::env::current_exe()
+/// The command that runs this `stemma`, for hooks, quoted for a shell.
+pub fn this_stemma() -> String {
+    let path = std::env::current_exe()
         .map(|p| p.display().to_string())
-        .unwrap_or_else(|_| "stemma".into())
-}
-
-/// The Claude Code settings for a session: what the agent may not do, and the
-/// summary it gets when its session starts (or resumes, or is compacted).
-fn claude_settings(library: &Path) -> serde_json::Value {
-    let mut deny = Vec::new();
-    for file in PROTECTED {
-        // `//` makes the path absolute in Claude Code's permission rules.
-        let path = format!("/{}/{file}", library.display());
-        // Edit rules cover every file-editing tool.
-        deny.push(format!("Edit({path})"));
-    }
-    for command in FORBIDDEN_COMMANDS {
-        deny.push(format!("Bash({command}:*)"));
-    }
-    let hook = format!("'{}' hook session-start", this_stemma());
-    json!({
-        "permissions": { "deny": deny },
-        "env": { SESSION_VARIABLE: "1" },
-        "hooks": {
-            "SessionStart": [{ "hooks": [{ "type": "command", "command": hook }] }],
-        },
-    })
-}
-
-/// Writes the session's files under `.stemma/agent/claude/` and returns the
-/// arguments that load them.
-fn prepare_claude(library: &Library) -> Result<Vec<String>> {
-    let base = library.dir.join(".stemma").join("agent").join("claude");
-    let plugin = base.join("plugin");
-    std::fs::create_dir_all(plugin.join(".claude-plugin"))
-        .with_context(|| format!("creating {}", plugin.display()))?;
-    let settings = base.join("settings.json");
-    std::fs::write(
-        &settings,
-        serde_json::to_string_pretty(&claude_settings(&library.dir))?,
-    )?;
-    let instructions = base.join("instructions.md");
-    std::fs::write(&instructions, INSTRUCTIONS)?;
-    std::fs::write(
-        plugin.join(".claude-plugin").join("plugin.json"),
-        serde_json::to_string_pretty(&json!({
-            "name": "stemma",
-            "version": env!("CARGO_PKG_VERSION"),
-            "description": "How to work in a Stemma library.",
-        }))?,
-    )?;
-    for (name, skill) in SKILLS {
-        let dir = plugin.join("skills").join(name);
-        std::fs::create_dir_all(&dir)?;
-        std::fs::write(dir.join("SKILL.md"), skill)?;
-    }
-    Ok(vec![
-        "--settings".into(),
-        settings.display().to_string(),
-        "--plugin-dir".into(),
-        plugin.display().to_string(),
-        "--append-system-prompt-file".into(),
-        instructions.display().to_string(),
-    ])
-}
-
-/// The instructions for Codex, which takes them as one text: the instructions,
-/// then every skill.
-fn codex_instructions() -> String {
-    let mut text = INSTRUCTIONS.to_string();
-    for (_, skill) in SKILLS {
-        // Drop the skill's front matter: Codex reads the text itself.
-        let body = skill
-            .strip_prefix("---\n")
-            .and_then(|s| s.split_once("\n---\n"))
-            .map_or(*skill, |(_, body)| body);
-        text.push_str("\n\n");
-        text.push_str(body.trim());
-    }
-    text
-}
-
-/// The arguments that give Codex its instructions and sandbox. Codex runs
-/// hooks only once a person trusts them, so the summary a Claude Code session
-/// gets from its hook goes into Codex's instructions instead.
-fn prepare_codex(library: &Library) -> Vec<String> {
-    let text = format!("{}\n\n{}", codex_instructions(), session_summary(library));
-    let instructions = toml::Value::String(text).to_string();
-    vec![
-        "--sandbox".into(),
-        "workspace-write".into(),
-        "--config".into(),
-        format!("developer_instructions={instructions}"),
-    ]
+        .unwrap_or_else(|_| "stemma".into());
+    format!("'{}'", path.replace('\'', r"'\''"))
 }
 
 /// The person's handle: their account on the forge when it is known,
@@ -226,7 +278,7 @@ pub fn person() -> String {
 /// Prepares the session of an agent in the library containing the current
 /// directory.
 pub fn prepare(
-    agent: Agent,
+    harness: Harness,
     extra: Vec<String>,
     dry_run: bool,
     branch: &crate::branches::Request,
@@ -236,23 +288,30 @@ pub fn prepare(
     if !dry_run && crate::agents_md::ensure(&library.dir, &library.config.library.title)? {
         crate::ui::note("Updated the block stemma keeps in AGENTS.md.");
     }
-    let mut args = match agent {
-        Agent::Claude => prepare_claude(&library)?,
-        Agent::Codex => prepare_codex(&library),
-    };
-    args.extend(extra);
+    // The branch first: the summary an adapter writes is the chosen branch's.
     let branch = if dry_run {
         crate::branches::current(&library.dir)
     } else {
         crate::branches::choose(&library.dir, branch, mode)?
     };
-    let program = match agent {
-        Agent::Claude => "claude",
-        Agent::Codex => "codex",
+    let equipment = Equipment { library: &library };
+    equipment.write_neutral()?;
+    let setup = match harness {
+        Harness::Claude => claude::prepare(&equipment)?,
+        Harness::Codex => codex::prepare(&equipment)?,
+        Harness::Deepseek => deepseek::prepare(&equipment)?,
+        Harness::Opencode => opencode::prepare(&equipment)?,
     };
+    let args = match harness {
+        Harness::Deepseek => deepseek::arguments(setup.args, extra),
+        _ => setup.args.into_iter().chain(extra).collect(),
+    };
+    let mut env = vec![(SESSION_VARIABLE.to_string(), "1".to_string())];
+    env.extend(setup.env);
     Ok(Launch {
-        program: program.into(),
+        program: harness.program().into(),
         args,
+        env,
         dir: library.dir,
         branch,
     })
@@ -265,7 +324,7 @@ impl Launch {
         command
             .args(&self.args)
             .current_dir(&self.dir)
-            .env(SESSION_VARIABLE, "1");
+            .envs(self.env.iter().map(|(k, v)| (k, v)));
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
@@ -282,37 +341,258 @@ impl Launch {
     }
 }
 
+// Hooks: what harnesses run at moments of a session.
+
+/// Runs a hook for an agent. `session-start` prints the session's summary (as
+/// Claude Code's hook JSON with `json_output`); `pre-tool-use` reads a tool
+/// call, in Claude Code's hook format, from stdin, and denies it when it would
+/// edit a protected file or run a forbidden command.
+pub fn hook(event: &str, json_output: bool) -> Result<bool> {
+    match event {
+        "session-start" => {
+            let library = Library::find(Path::new("."))?;
+            let summary = session_summary(&library);
+            if json_output {
+                let value = json!({ "hookSpecificOutput": {
+                    "hookEventName": "SessionStart", "additionalContext": summary,
+                }});
+                println!("{value}");
+            } else {
+                println!("{summary}");
+            }
+            Ok(true)
+        }
+        "pre-tool-use" => {
+            let mut input = String::new();
+            std::io::stdin().read_to_string(&mut input)?;
+            let call: serde_json::Value = serde_json::from_str(&input).unwrap_or_default();
+            if let Some(reason) = denial(&call) {
+                let value = json!({ "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": reason,
+                }});
+                println!("{value}");
+            }
+            Ok(true)
+        }
+        other => anyhow::bail!("unknown hook event '{other}'"),
+    }
+}
+
+/// Why a tool call, in Claude Code's hook format (`tool_name`, `tool_input`,
+/// `cwd`), is denied, if it is.
+pub fn denial(call: &serde_json::Value) -> Option<String> {
+    let tool = call["tool_name"]
+        .as_str()
+        .unwrap_or_default()
+        .to_lowercase();
+    let input = &call["tool_input"];
+    let cwd = call["cwd"]
+        .as_str()
+        .map(PathBuf::from)
+        .or_else(|| std::env::current_dir().ok())?;
+    if let Some(command) = input["command"].as_str()
+        && matches!(tool.as_str(), "bash" | "shell" | "pwsh" | "exec_command")
+    {
+        return forbidden_command(command).map(|f| {
+            format!(
+                "`{f}` is a person's act: agents started by stemma never run it. Tell the person \
+                 what to run in their own terminal."
+            )
+        });
+    }
+    let editing = match tool.as_str() {
+        "write" | "edit" | "multiedit" | "notebookedit" | "apply_patch" => true,
+        // `view` only reads.
+        "str_replace_editor" => input["command"].as_str() != Some("view"),
+        _ => false,
+    };
+    if !editing {
+        return None;
+    }
+    let library = Library::find(&cwd).ok()?;
+    ["file_path", "path", "notebook_path"]
+        .iter()
+        .filter_map(|key| input[key].as_str())
+        .find_map(|path| protected_file(&library.dir, &cwd.join(path)))
+        .map(|file| {
+            format!(
+                "{file} is written only by stemma (or, for signatures, by a person signing): \
+                 agents never edit it."
+            )
+        })
+}
+
+/// Removes `.` and `..` from a path, without reading the filesystem.
+fn normalize(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// A path with its longest existing ancestor resolved, so that a library and
+/// a file in it compare alike through symbolic links.
+fn resolve(path: &Path) -> PathBuf {
+    let path = normalize(path);
+    let mut rest = Vec::new();
+    let mut base = path.as_path();
+    loop {
+        if let Ok(real) = base.canonicalize() {
+            return rest.iter().rev().fold(real, |p, c| p.join(c));
+        }
+        match (base.parent(), base.file_name()) {
+            (Some(parent), Some(name)) => {
+                rest.push(name.to_os_string());
+                base = parent;
+            }
+            _ => return path,
+        }
+    }
+}
+
+/// The protected file `path` is, relative to the library at `library`.
+pub fn protected_file(library: &Path, path: &Path) -> Option<String> {
+    let relative = resolve(path)
+        .strip_prefix(resolve(library))
+        .ok()?
+        .to_string_lossy()
+        .replace('\\', "/");
+    PROTECTED
+        .iter()
+        .any(|p| match p.strip_suffix("/**") {
+            Some(dir) => relative == dir || relative.starts_with(&format!("{dir}/")),
+            None => relative == *p,
+        })
+        .then_some(relative)
+}
+
+/// The forbidden command a shell command line runs, if any, by its simple
+/// commands: `cd x && stemma sign` runs `stemma sign`. It is a guard against
+/// shortcuts, not against an agent set on evading it: `stemma sign` and
+/// `stemma key` refuse to run in an agent's session anyway.
+pub fn forbidden_command(line: &str) -> Option<&'static str> {
+    let separators = [';', '&', '|', '\n', '(', ')', '`', '{', '}'];
+    line.split(|c| separators.contains(&c)).find_map(|simple| {
+        let mut words = simple
+            .split_whitespace()
+            .map(|w| w.trim_matches(|c| c == '"' || c == '\''))
+            .skip_while(|w| w.contains('=') || matches!(*w, "env" | "exec" | "command" | "$"));
+        let program = words.next()?;
+        let program = program.rsplit('/').next().unwrap_or(program);
+        let rest: Vec<&str> = words.collect();
+        match program {
+            "stemma" => match rest.first() {
+                Some(&"sign") => Some("stemma sign"),
+                Some(&"key") => Some("stemma key"),
+                _ => None,
+            },
+            "git" => {
+                let push = rest.iter().position(|w| *w == "push")?;
+                let args = &rest[push + 1..];
+                let forced = args.iter().any(|a| {
+                    *a == "-f" || a.starts_with("--force") || (a.starts_with('+') && a.len() > 1)
+                });
+                if forced {
+                    return Some("git push --force");
+                }
+                args.iter()
+                    .filter(|a| !a.starts_with('-'))
+                    .skip(1)
+                    .any(|a| {
+                        let target = a.rsplit(':').next().unwrap_or(a);
+                        target == "main" || target == "refs/heads/main"
+                    })
+                    .then_some("git push origin main")
+            }
+            _ => None,
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn claude_settings_deny_protected_files_and_signing() {
-        let settings = claude_settings(Path::new("/lib"));
-        let deny: Vec<&str> = settings["permissions"]["deny"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|v| v.as_str().unwrap())
-            .collect();
-        assert!(deny.contains(&"Edit(//lib/lakefile.toml)"));
-        assert!(deny.contains(&"Edit(//lib/signatures/**)"));
-        assert!(deny.contains(&"Bash(stemma sign:*)"));
-        assert_eq!(settings["env"][SESSION_VARIABLE], "1");
+    fn the_instructions_name_the_section_the_guard_looks_for() {
+        assert!(INSTRUCTIONS.starts_with(&format!("# {INSTRUCTIONS_TITLE}\n")));
+        assert!(crate::agents_md::block().contains(INSTRUCTIONS_TITLE));
     }
 
     #[test]
-    fn codex_instructions_include_every_skill_without_front_matter() {
-        let text = codex_instructions();
+    fn inline_instructions_include_every_skill_without_front_matter() {
+        let text = inline_instructions();
         assert!(text.starts_with("# Working in a Stemma library"));
         for heading in [
             "# Writing Stemma documents",
             "# Doing mathematics",
             "# Saving and sharing",
             "# Signatures",
+            "# Formalizing a source",
         ] {
             assert!(text.contains(heading), "missing {heading}");
         }
         assert!(!text.contains("description:"));
+    }
+
+    #[test]
+    fn forbidden_commands_are_found_inside_command_lines() {
+        for line in [
+            "stemma sign",
+            "stemma sign even-add",
+            "cd lib && stemma sign",
+            "/usr/local/bin/stemma key add",
+            "STEMMA_SESSION= stemma sign",
+            "git push --force",
+            "git push -f origin work/alice",
+            "git push --force-with-lease",
+            "git push origin main",
+            "git push origin HEAD:main",
+            "git -C lib push origin main",
+            "git push origin +work/alice",
+            "echo hi; git push upstream refs/heads/main",
+        ] {
+            assert!(forbidden_command(line).is_some(), "{line}");
+        }
+        for line in [
+            "stemma check --json",
+            "stemma share --json",
+            "git push",
+            "git push origin work/alice",
+            "git push --set-upstream origin work/alice-main",
+            "echo stemma sign",
+            "git log main",
+        ] {
+            assert_eq!(forbidden_command(line), None, "{line}");
+        }
+    }
+
+    #[test]
+    fn protected_files_are_matched_relative_to_the_library() {
+        let lib = Path::new("/nonexistent/lib");
+        for (path, protected) in [
+            ("/nonexistent/lib/stemma.toml", true),
+            ("/nonexistent/lib/./signatures/even.toml", true),
+            ("/nonexistent/lib/.github/workflows/stemma.yml", true),
+            ("/nonexistent/lib/Alg/../lakefile.toml", true),
+            ("/nonexistent/lib/Alg/Even.lean", false),
+            ("/nonexistent/lib/signaturesx", false),
+            ("/nonexistent/other/stemma.toml", false),
+        ] {
+            assert_eq!(
+                protected_file(lib, Path::new(path)).is_some(),
+                protected,
+                "{path}"
+            );
+        }
     }
 }

@@ -53,8 +53,9 @@ nothing. Its answer says what happened:
   explain it in mathematical terms, show both versions, recommend, and ask.
   Imports in the table of contents that conflict usually just both stay. Then
   commit and share again.
-- `problems` or `build`: a check fails after bringing in `main`. Fix it,
-  commit, and share again.
+- `problems`, or a `build` whose `ok` is false (its `log` has Lean's
+  errors): a check fails after bringing in `main`. Fix it, commit, and share
+  again.
 - `stopped`: sharing needs a decision and pushed nothing. Tell the person
   what it says. In particular:
   - the share branch has commits made elsewhere (`foreign`), such as the

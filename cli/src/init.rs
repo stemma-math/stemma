@@ -17,6 +17,8 @@ pub struct Options {
     pub name: Option<String>,
     pub title: Option<String>,
     pub mathlib: Option<bool>,
+    /// Publish the site to GitHub Pages from `main`.
+    pub publish: Option<bool>,
     pub stemma_lean: Option<PathBuf>,
     pub git: Option<bool>,
     pub update: Option<bool>,
@@ -211,6 +213,12 @@ pub fn init(options: Options, json_output: bool) -> Result<()> {
         }
     }
     let mathlib = ask.yes_no(options.mathlib, "Build on Mathlib?", true, true)?;
+    let publish = ask.yes_no(
+        options.publish,
+        "Publish the library's site to GitHub Pages, from main?",
+        false,
+        false,
+    )?;
     let in_repo = dir.join(".git").exists();
     let git = !in_repo && ask.yes_no(options.git, "Create a git repository?", true, true)?;
     let update = ask.yes_no(
@@ -240,7 +248,11 @@ pub fn init(options: Options, json_output: bool) -> Result<()> {
     let set_up = push
         && ask.yes_no(
             options.forge,
-            "Set the repository up on the forge (rules on main, merge commits only)?",
+            if publish {
+                "Set the repository up on the forge (rules on main, merge commits only, Pages)?"
+            } else {
+                "Set the repository up on the forge (rules on main, merge commits only)?"
+            },
             true,
             true,
         )?;
@@ -262,6 +274,7 @@ pub fn init(options: Options, json_output: bool) -> Result<()> {
         "stemma_path": stemma_path.map(|p| p.display().to_string()),
         "mathlib": mathlib,
         "mathlib_rev": mathlib_rev(),
+        "publish": publish,
         "members": members.iter().enumerate().map(|(i, name)| json!({
             "name": name,
             // The person creating the library signs with the key git signs with.
@@ -422,10 +435,12 @@ pub fn init(options: Options, json_output: bool) -> Result<()> {
         );
     } else {
         let next = if dir == Path::new(".") {
-            "Next: `stemma claude/codex` to start working.".to_string()
+            "Next: `stemma agent <harness>` (claude, codex, deepseek or opencode) to start working."
+                .to_string()
         } else {
             format!(
-                "Next: cd {} and `stemma claude/codex` to start working.",
+                "Next: cd {} and `stemma agent <harness>` (claude, codex, deepseek or opencode) \
+                 to start working.",
                 dir.display()
             )
         };

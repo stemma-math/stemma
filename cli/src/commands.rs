@@ -126,8 +126,8 @@ fn disk_diagnostics(library: &Library) -> Result<Vec<String>> {
     }
     if !crate::agents_md::is_current(&library.dir) {
         out.push(
-            "AGENTS.md lacks the current block stemma keeps in it; `stemma claude` or \
-             `stemma codex` writes it."
+            "AGENTS.md lacks the current block stemma keeps in it; `stemma agent <harness>` \
+             or `stemma upgrade` writes it."
                 .into(),
         );
     }
@@ -146,17 +146,27 @@ pub fn build_and_extract(
     library: &Library,
     json_output: bool,
 ) -> Result<std::result::Result<Report, String>> {
+    Ok(build_and_extract_timed(library, json_output)?.0)
+}
+
+/// [`build_and_extract`], with the seconds `lake build` took.
+fn build_and_extract_timed(
+    library: &Library,
+    json_output: bool,
+) -> Result<(std::result::Result<Report, String>, f64)> {
     let spinner = ui::Spinner::start("Building the library", json_output);
+    let start = std::time::Instant::now();
     let build = lake::build(library);
+    let seconds = start.elapsed().as_secs_f64();
     spinner.stop();
     let build = build?;
     if !build.success {
-        return Ok(Err(lake::problems(&build.output)));
+        return Ok((Err(lake::problems(&build.output)), seconds));
     }
     let spinner = ui::Spinner::start("Reading its state", json_output);
     let report = lake::extract(library);
     spinner.stop();
-    Ok(Ok(report?))
+    Ok((Ok(report?), seconds))
 }
 
 /// Says that the library does not build, with Lake's errors and hints to fix them.
@@ -205,6 +215,8 @@ pub struct Checks {
     pub signatures: Vec<String>,
     /// Lake's errors, when the library does not build.
     pub build: Option<String>,
+    /// The seconds `lake build` took.
+    pub build_seconds: f64,
     /// The library's report, when it builds.
     pub report: Option<Report>,
 }
@@ -220,6 +232,12 @@ impl Checks {
         self.problems.is_empty() && self.build.is_none()
     }
 
+    /// The build, as `--json` outputs say it: always an object, so that an
+    /// agent never mistakes a build that passed for one that did not run.
+    pub fn build_json(&self) -> serde_json::Value {
+        build_json(self.build.as_deref(), self.build_seconds)
+    }
+
     /// Every problem, the missing signatures included.
     pub fn all_problems(&self) -> Vec<String> {
         self.problems
@@ -227,6 +245,15 @@ impl Checks {
             .chain(&self.signatures)
             .cloned()
             .collect()
+    }
+}
+
+/// The build as `--json` outputs say it: `{"ok": true, "seconds": …}`, or
+/// `{"ok": false, "log": "…"}` with Lake's errors.
+pub fn build_json(errors: Option<&str>, seconds: f64) -> serde_json::Value {
+    match errors {
+        None => json!({ "ok": true, "seconds": (seconds * 100.0).round() / 100.0 }),
+        Some(log) => json!({ "ok": false, "log": log }),
     }
 }
 
@@ -277,7 +304,8 @@ pub fn run_checks(library: &Library, base: &str, json_output: bool) -> Result<Ch
         ));
     }
     let mut signatures = Vec::new();
-    let (build, report) = match build_and_extract(library, json_output)? {
+    let (built, build_seconds) = build_and_extract_timed(library, json_output)?;
+    let (build, report) = match built {
         Ok(report) => {
             for d in &report.diagnostics {
                 problems.push(match (&d.module, d.line) {
@@ -296,11 +324,19 @@ pub fn run_checks(library: &Library, base: &str, json_output: bool) -> Result<Ch
         }
         Err(output) => (Some(output), None),
     };
+    let members: Vec<String> = library.config.members.keys().cloned().collect();
+    problems.extend(crate::sources::check(
+        &crate::sources::read(&library.dir),
+        &members,
+        report.as_ref(),
+        &std::fs::read_to_string(library.dir.join(REFERENCES)).unwrap_or_default(),
+    ));
     problems.dedup();
     Ok(Checks {
         problems,
         signatures,
         build,
+        build_seconds,
         report,
     })
 }
@@ -310,12 +346,13 @@ pub fn check(json_output: bool) -> Result<bool> {
     let library = Library::find(Path::new("."))?;
     let checks = run_checks(&library, DEFAULT_BASE, json_output)?;
     let problems = checks.all_problems();
+    let build = checks.build_json();
     let build_errors = checks.build;
     let ok = problems.is_empty() && build_errors.is_none();
     emit(
         json_output,
         &json!({
-            "ok": ok, "build": build_errors, "problems": problems,
+            "ok": ok, "build": build, "problems": problems,
             "hints": build_errors.as_deref().map(build_hints).unwrap_or_default(),
         }),
         || {
@@ -364,6 +401,7 @@ pub fn status(json_output: bool) -> Result<bool> {
         })
         .collect();
     let warnings = crate::verify::keyless_warnings(&config);
+    let sources = crate::sources::coverage(&crate::sources::read(&library.dir), &report);
     if json_output {
         let environments: Vec<_> = report
             .environments
@@ -388,7 +426,7 @@ pub fn status(json_output: bool) -> Result<bool> {
             .collect();
         let value = json!({
             "environments": environments, "awaiting_signature": awaiting,
-            "warnings": warnings, "diagnostics": report.diagnostics,
+            "warnings": warnings, "diagnostics": report.diagnostics, "sources": sources,
         });
         println!("{}", serde_json::to_string_pretty(&value)?);
         return Ok(true);
@@ -471,6 +509,7 @@ pub fn status(json_output: bool) -> Result<bool> {
             println!("  {label:<width$}  {}", ui::state(state, 0));
         }
     }
+    show_sources(&sources);
     for w in &warnings {
         ui::warning(w);
     }
@@ -478,6 +517,47 @@ pub fn status(json_output: bool) -> Result<bool> {
         ui::error(&d.message);
     }
     Ok(true)
+}
+
+/// The coverage of the sources the library formalizes, by part and by owner.
+fn show_sources(sources: &[crate::sources::SourceCoverage]) {
+    for source in sources {
+        println!();
+        let title = source.title.as_deref().unwrap_or(&source.source);
+        let phase = match source.phase.as_deref() {
+            Some("planning") => " · the plan is being agreed",
+            Some("initial") => " · initial phase",
+            Some("ended") => " · initial phase ended",
+            _ => "",
+        };
+        println!(
+            "{} {}",
+            ui::bold(format!("Source: {title}")),
+            ui::dim(format!("sources/{}{phase}", source.source))
+        );
+        println!("  {}", ui::dim(source.coverage.line()));
+        let width = source
+            .parts
+            .iter()
+            .map(|p| p.title.chars().count())
+            .max()
+            .unwrap_or(0);
+        for part in &source.parts {
+            println!(
+                "  {:<width$}  {}",
+                part.title,
+                ui::dim(part.coverage.line())
+            );
+        }
+        println!("  {}", ui::bold("By owner"));
+        for owner in &source.owners {
+            println!(
+                "  {:<width$}  {}",
+                owner.owner.as_deref().unwrap_or("(nobody)"),
+                ui::dim(owner.coverage.line())
+            );
+        }
+    }
 }
 
 #[cfg(test)]
