@@ -211,11 +211,23 @@ fn upgrade_moves_an_old_library_to_this_version() {
     assert_eq!(plan["migrations"].as_array().unwrap().len(), 4);
     assert!(read(dir.join("stemma.toml")).contains("self_merge"));
 
+    // Without a terminal, it asks nothing, and says what follows: a
+    // maintainer's approval with `stemma sign`, which also re-signs what the
+    // new versions left stale, then sharing.
     let out = stemma(&dir, &["upgrade", "--no-update"]);
     assert!(
         out.status.success(),
         "{}",
         String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.contains("`stemma sign`, in a maintainer's terminal, to approve the upgrade"),
+        "{text}"
+    );
+    assert!(
+        text.contains("`stemma status` lists them); then `stemma share`"),
+        "{text}"
     );
     let config = read(dir.join("stemma.toml"));
     assert!(config.contains(&format!("stemma = \"{}\"", env!("CARGO_PKG_VERSION"))));
@@ -269,6 +281,9 @@ fn upgrade_on_main_goes_to_a_branch_of_its_own() {
     let branch = format!("upgrade/stemma-{}", env!("CARGO_PKG_VERSION"));
     assert_eq!(result["branch"], branch.as_str());
     assert_eq!(result["committed"], true);
+    let next = result["next"].as_str().unwrap();
+    assert!(next.starts_with("Next: `stemma sign`"), "{next}");
+    assert!(next.ends_with("then `stemma share`."), "{next}");
     assert_eq!(git(&dir, &["branch", "--show-current"]), branch);
     assert_eq!(
         git(&dir, &["rev-parse", "main"]),
@@ -1147,7 +1162,8 @@ fn fake_lake(dir: &Path) -> PathBuf {
     let lake = bin.join("lake");
     std::fs::write(
         &lake,
-        "#!/bin/sh\ncase \"$1\" in\n  build) exit 0 ;;\n  \
+        "#!/bin/sh\ncase \"$1\" in\n  \
+         build) [ -z \"$STEMMA_TEST_BUILD_FAILS\" ] || { echo \"$STEMMA_TEST_BUILD_FAILS\"; exit 1; } ;;\n  \
          exe) cp \"$STEMMA_TEST_REPORT\" \"$4\" ;;\n  *) exit 1 ;;\nesac\n",
     )
     .unwrap();
@@ -1295,6 +1311,9 @@ fn check_requires_central_environments_to_be_signed() {
     // Unsigned, it is a problem of `stemma check`, with its label and state.
     let c = check(&dir);
     assert_eq!(c["ok"], false, "{c}");
+    // The build passed, and says so: it is never `null`.
+    assert_eq!(c["build"]["ok"], true, "{c}");
+    assert!(c["build"]["seconds"].is_number(), "{c}");
     let problems = c["problems"].to_string();
     assert!(
         problems.contains("'even-add' is central and unsigned"),
@@ -1337,6 +1356,44 @@ fn check_requires_central_environments_to_be_signed() {
     // Once the base turns it off, nothing is required.
     git(&dir, &["update-ref", "refs/remotes/origin/main", "work"]);
     assert_eq!(check(&dir)["ok"], true);
+}
+
+#[test]
+fn check_reports_a_failed_build_with_its_log() {
+    let (dir, _, _) = library_of_alice("build-fails");
+    let bin = fake_lake(&dir);
+    let report = dir.join("report.json");
+    write_report(&report, &[]);
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let out = Command::new(env!("CARGO_BIN_EXE_stemma"))
+        .args(["check", "--json"])
+        .envs(IDENTITY)
+        .env("PATH", path)
+        .env("STEMMA_TEST_REPORT", &report)
+        .env(
+            "STEMMA_TEST_BUILD_FAILS",
+            "error: Alg/Even.lean:3:0: unknown identifier 'foo'",
+        )
+        .env_remove("STEMMA_SESSION")
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let c = json_of(&out);
+    assert_eq!(c["ok"], false, "{c}");
+    assert_eq!(c["build"]["ok"], false, "{c}");
+    assert!(
+        c["build"]["log"]
+            .as_str()
+            .unwrap()
+            .contains("unknown identifier 'foo'"),
+        "{c}"
+    );
+    assert!(c["build"].get("seconds").is_none(), "{c}");
 }
 
 #[test]
@@ -1688,4 +1745,49 @@ fn sign_separates_this_branch_from_others_and_signs_only_what_is_chosen() {
             .contains("not signed with the key"),
         "{v}"
     );
+}
+
+#[test]
+fn upgrade_in_a_terminal_lists_what_it_will_do_and_asks() {
+    let dir = scratch("upgrade-asks");
+    let out = stemma(
+        &dir,
+        &["init", ".", "--name", "Alg", "--no-git", "--no-mathlib"],
+    );
+    assert!(out.status.success(), "{}", stderr(&out));
+    let config = read(dir.join("stemma.toml")).replace(
+        &format!("stemma = \"{}\"", env!("CARGO_PKG_VERSION")),
+        "stemma = \"0.1.0\"",
+    );
+    std::fs::write(dir.join("stemma.toml"), &config).unwrap();
+    let run = || {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_stemma"));
+        command
+            .args(["upgrade", "--no-update", "--no-forge"])
+            .envs(IDENTITY)
+            .env_remove("STEMMA_SESSION")
+            .current_dir(&dir);
+        pty::Pty::spawn(command)
+    };
+    // Declining changes nothing.
+    let Some(mut upgrade) = run() else {
+        eprintln!("no pseudo-terminal here: skipped");
+        return;
+    };
+    upgrade.expect("Upgrade the library?");
+    assert!(upgrade.output().contains("From stemma 0.1.0"));
+    assert!(upgrade.output().contains("Write stemma.toml."));
+    upgrade.send("n");
+    let (ok, output) = upgrade.finish();
+    assert!(!ok, "{output}");
+    assert!(output.contains("Nothing was changed."), "{output}");
+    assert_eq!(read(dir.join("stemma.toml")), config);
+    // Accepting upgrades, and says what follows.
+    let mut upgrade = run().unwrap();
+    upgrade.expect("Upgrade the library?");
+    upgrade.send("y");
+    let (ok, output) = upgrade.finish();
+    assert!(ok, "{output}");
+    assert!(output.contains("`stemma sign`"), "{output}");
+    assert!(read(dir.join("stemma.toml")).contains(env!("CARGO_PKG_VERSION")));
 }

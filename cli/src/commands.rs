@@ -146,17 +146,27 @@ pub fn build_and_extract(
     library: &Library,
     json_output: bool,
 ) -> Result<std::result::Result<Report, String>> {
+    Ok(build_and_extract_timed(library, json_output)?.0)
+}
+
+/// [`build_and_extract`], with the seconds `lake build` took.
+fn build_and_extract_timed(
+    library: &Library,
+    json_output: bool,
+) -> Result<(std::result::Result<Report, String>, f64)> {
     let spinner = ui::Spinner::start("Building the library", json_output);
+    let start = std::time::Instant::now();
     let build = lake::build(library);
+    let seconds = start.elapsed().as_secs_f64();
     spinner.stop();
     let build = build?;
     if !build.success {
-        return Ok(Err(lake::problems(&build.output)));
+        return Ok((Err(lake::problems(&build.output)), seconds));
     }
     let spinner = ui::Spinner::start("Reading its state", json_output);
     let report = lake::extract(library);
     spinner.stop();
-    Ok(Ok(report?))
+    Ok((Ok(report?), seconds))
 }
 
 /// Says that the library does not build, with Lake's errors and hints to fix them.
@@ -205,6 +215,8 @@ pub struct Checks {
     pub signatures: Vec<String>,
     /// Lake's errors, when the library does not build.
     pub build: Option<String>,
+    /// The seconds `lake build` took.
+    pub build_seconds: f64,
     /// The library's report, when it builds.
     pub report: Option<Report>,
 }
@@ -220,6 +232,12 @@ impl Checks {
         self.problems.is_empty() && self.build.is_none()
     }
 
+    /// The build, as `--json` outputs say it: always an object, so that an
+    /// agent never mistakes a build that passed for one that did not run.
+    pub fn build_json(&self) -> serde_json::Value {
+        build_json(self.build.as_deref(), self.build_seconds)
+    }
+
     /// Every problem, the missing signatures included.
     pub fn all_problems(&self) -> Vec<String> {
         self.problems
@@ -227,6 +245,15 @@ impl Checks {
             .chain(&self.signatures)
             .cloned()
             .collect()
+    }
+}
+
+/// The build as `--json` outputs say it: `{"ok": true, "seconds": …}`, or
+/// `{"ok": false, "log": "…"}` with Lake's errors.
+pub fn build_json(errors: Option<&str>, seconds: f64) -> serde_json::Value {
+    match errors {
+        None => json!({ "ok": true, "seconds": (seconds * 100.0).round() / 100.0 }),
+        Some(log) => json!({ "ok": false, "log": log }),
     }
 }
 
@@ -277,7 +304,8 @@ pub fn run_checks(library: &Library, base: &str, json_output: bool) -> Result<Ch
         ));
     }
     let mut signatures = Vec::new();
-    let (build, report) = match build_and_extract(library, json_output)? {
+    let (built, build_seconds) = build_and_extract_timed(library, json_output)?;
+    let (build, report) = match built {
         Ok(report) => {
             for d in &report.diagnostics {
                 problems.push(match (&d.module, d.line) {
@@ -301,6 +329,7 @@ pub fn run_checks(library: &Library, base: &str, json_output: bool) -> Result<Ch
         problems,
         signatures,
         build,
+        build_seconds,
         report,
     })
 }
@@ -310,12 +339,13 @@ pub fn check(json_output: bool) -> Result<bool> {
     let library = Library::find(Path::new("."))?;
     let checks = run_checks(&library, DEFAULT_BASE, json_output)?;
     let problems = checks.all_problems();
+    let build = checks.build_json();
     let build_errors = checks.build;
     let ok = problems.is_empty() && build_errors.is_none();
     emit(
         json_output,
         &json!({
-            "ok": ok, "build": build_errors, "problems": problems,
+            "ok": ok, "build": build, "problems": problems,
             "hints": build_errors.as_deref().map(build_hints).unwrap_or_default(),
         }),
         || {

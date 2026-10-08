@@ -221,6 +221,9 @@ enum Commands {
         /// Do not set the repository up on the forge.
         #[arg(long)]
         no_forge: bool,
+        /// Ask nothing: upgrade.
+        #[arg(long, short)]
+        yes: bool,
     },
     /// Hooks agents run; not meant to be called by hand.
     #[command(hide = true)]
@@ -435,7 +438,17 @@ fn main() -> ExitCode {
             no_update,
             no_commit,
             no_forge,
-        } => upgrade::upgrade(dry_run, !no_update, !no_commit, !no_forge, cli.json),
+            yes,
+        } => upgrade::upgrade(
+            upgrade::Options {
+                dry_run,
+                update: !no_update,
+                commit: !no_commit,
+                forge: !no_forge,
+                yes,
+            },
+            cli.json,
+        ),
         Commands::Remote { url, unset } => branches::remote_command(url, unset, cli.json),
         Commands::Hook { event } => hook(&event),
         Commands::Claude(args) => start(agent::Agent::Claude, args, cli.json),

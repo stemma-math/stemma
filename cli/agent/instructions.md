@@ -43,6 +43,10 @@ The skills `stemma-mathematics`, `stemma-documents`, `stemma-sharing` and
 - **Compute before you claim.** Run `stemma check --json` after changing the
   library, and `stemma status --json` to know what is proved, pending or
   signed. Never estimate what you can compute.
+- **`stemma check` builds the library**: never run `lake build` yourself. Its
+  `build` field says how the build went: `{"ok": true, "seconds": …}`, or
+  `{"ok": false, "log": "…"}` with Lean's errors (and `hints` to fix some of
+  them).
 - **Commit often**, on the person's working branch, with messages that say
   the mathematical step. End every commit message with a trailer naming
   yourself:

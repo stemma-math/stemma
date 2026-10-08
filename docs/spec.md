@@ -674,6 +674,11 @@ checks.
 | On every push | The forge, at once | Protected files and layout |
 | On a pull request | Required checks | Everything, on `main` with the pull request applied: the build, the rules of this specification, and signatures. This is what guarantees |
 
+`stemma check` builds the library itself, so an agent never runs Lake on its
+own. Its JSON output always says how the build went: `"build": {"ok": true,
+"seconds": …}` when it passes, and `"build": {"ok": false, "log": "…"}`, with
+Lean's errors, when it fails.
+
 A pull request that would leave a central environment unsigned (under the
 default policy) or a signed one stale says which signatures it needs, label by
 label, and is not merged until they are added to it. `stemma check` reports
@@ -794,7 +799,7 @@ The first forge Stemma supports is GitHub:
 | `stemma preview` | Builds the site and serves it locally |
 | `stemma share` | Shares the working branch through its share branch: brings `main` in, and opens or updates the pull request |
 | `stemma remote` | Shows or sets the personal remote working branches are saved to |
-| `stemma upgrade` | Moves the library to this version of `stemma`: migrations, the files only `stemma` writes, and the dependencies |
+| `stemma upgrade` | Moves the library to this version of `stemma`: migrations, the files only `stemma` writes, and the dependencies. In a terminal it lists the migrations and asks first (`--yes` does not ask); it ends saying what follows: `stemma sign`, by a maintainer, to approve the upgrade and re-sign what it left stale (`stemma status` lists them), then `stemma share` |
 | `stemma verify` | Whether a change carries the signatures and approvals it needs, from git alone |
 | `stemma sign` | Signs environments and approves changes, in an interactive terminal; `stemma sign <labels…>` only those |
 | `stemma key add` | Registers the key a member signs with, on a branch, for a maintainer to approve |
