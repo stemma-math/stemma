@@ -471,6 +471,17 @@ fn show_notes(
     Ok(missing.is_empty())
 }
 
+/// A link to the read-back of an environment on the page kept on disk
+/// (`index.html#<label>`), when one was made of its Lean as it is now.
+pub fn link(library: &Path, env: &Environment) -> Option<String> {
+    let label = env.record.label.as_deref()?;
+    let formal = &env.fingerprints.as_ref()?.formal;
+    let dir = dir_of(library);
+    let page = dir.join("index.html");
+    let current = load(&dir, label).is_some_and(|r| &r.formal == formal);
+    (current && page.is_file()).then(|| format!("file://{}#{label}", page.display()))
+}
+
 /// Archives the read-back of an environment a person has just signed, when it
 /// was made of the Lean they signed. Read-backs are an aid, so this never
 /// stops a signature: when it fails, the read-back stays as it was.
@@ -814,6 +825,11 @@ mod tests {
         let entries = entries(&dir_of(&dir), &signed, &[]).unwrap();
         assert_eq!(entries[0].state(&reviews), State::Archived);
         assert_eq!(entries[1].state(&reviews), State::Stale);
+        // Links point at a current read-back's place on the page.
+        std::fs::write(dir_of(&dir).join("index.html"), "").unwrap();
+        let link = link(&dir, &signed.environments[0]).unwrap();
+        assert!(link.starts_with("file://") && link.ends_with("index.html#even-add"));
+        assert_eq!(super::link(&dir, &signed.environments[1]), None);
         // Without read-backs, signing leaves no trace.
         let empty = library("archive-none", &[]);
         archive_signed(&empty, &signed.environments[0]);
