@@ -200,7 +200,7 @@ command line's, and says which of the two to change.
 [library]
 name = "Algebra"            # the library's Lean name
 title = "Algebra"           # the site's title
-stemma = "0.3.0"            # the stemma version, which fixes Lean, Verso and Mathlib
+stemma = "0.4.0"            # the stemma version, which fixes Lean, Verso and Mathlib
 
 [members]
 alice = { roles = ["maintainer", "signer"], keys = ["ssh-ed25519 AAAA…"] }
