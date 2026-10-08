@@ -256,9 +256,34 @@ fn git(dir: &Path, args: &[&str]) -> Result<()> {
     Ok(())
 }
 
+/// Sets the group's repository up on the forge, when the library has one: a
+/// step of its own, which is not a change of files, and whose failures only
+/// say what to set by hand.
+fn set_up_forge(dir: &Path, json_output: bool) -> Option<Vec<crate::forge::Outcome>> {
+    let has_origin = Command::new("git")
+        .args(["remote", "get-url", "origin"])
+        .current_dir(dir)
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if !has_origin {
+        return None;
+    }
+    let spinner = ui::Spinner::start("Setting the repository up", json_output);
+    let outcomes = crate::forge::set_up(crate::forge::current().as_ref(), dir);
+    spinner.stop();
+    Some(outcomes)
+}
+
 /// `stemma upgrade`. On `main`, the upgrade goes to a branch of its own; it is
-/// committed unless `commit` is false, ready to share.
-pub fn upgrade(dry_run: bool, update: bool, commit: bool, json_output: bool) -> Result<bool> {
+/// committed unless `commit` is false, ready to share. Unless `forge` is false,
+/// it also sets the group's repository up on the forge.
+pub fn upgrade(
+    dry_run: bool,
+    update: bool,
+    commit: bool,
+    forge: bool,
+    json_output: bool,
+) -> Result<bool> {
     let library = Library::find(Path::new("."))?;
     let plan = plan(&library)?;
     let to = env!("CARGO_PKG_VERSION");
@@ -309,17 +334,32 @@ pub fn upgrade(dry_run: bool, update: bool, commit: bool, json_output: bool) -> 
     } else {
         false
     };
+    let forge = if !dry_run && forge {
+        set_up_forge(dir, json_output)
+    } else {
+        None
+    };
     if json_output {
         let value = json!({
             "from": plan.from, "to": to, "dry_run": dry_run,
             "migrations": plan.migrations, "changed": plan.changed, "updated": updated,
-            "branch": branch, "committed": committed,
+            "branch": branch, "committed": committed, "forge": forge,
         });
         println!("{}", serde_json::to_string_pretty(&value)?);
         return Ok(updated != Some(false));
     }
+    let say = |ok: bool, text: &str| {
+        if ok {
+            ui::success(text);
+        } else {
+            ui::warning(text);
+        }
+    };
     if plan.changed.is_empty() {
         ui::success(format!("The library already uses stemma {to}."));
+        if let Some(outcomes) = &forge {
+            crate::forge::report(outcomes, say);
+        }
         return Ok(true);
     }
     let verb = if dry_run { "Would upgrade" } else { "Upgraded" };
@@ -337,6 +377,9 @@ pub fn upgrade(dry_run: bool, update: bool, commit: bool, json_output: bool) -> 
     }
     for f in &plan.changed {
         ui::note(format!("{changed} {f}."));
+    }
+    if let Some(outcomes) = &forge {
+        crate::forge::report(outcomes, say);
     }
     match updated {
         Some(true) => ui::success("Updated the dependencies."),

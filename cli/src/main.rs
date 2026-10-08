@@ -75,6 +75,9 @@ enum Commands {
         /// Push main to the remote.
         #[arg(long)]
         push: bool,
+        /// Do not set the repository up on the forge after pushing main.
+        #[arg(long)]
+        no_forge: bool,
         /// Another member, by forge account (repeatable). You are always one.
         #[arg(long = "member")]
         members: Vec<String>,
@@ -171,6 +174,9 @@ enum Commands {
         /// Do not commit the upgrade.
         #[arg(long)]
         no_commit: bool,
+        /// Do not set the repository up on the forge.
+        #[arg(long)]
+        no_forge: bool,
     },
     /// Hooks agents run; not meant to be called by hand.
     #[command(hide = true)]
@@ -243,6 +249,7 @@ fn main() -> ExitCode {
             commit,
             remote,
             push,
+            no_forge,
             members,
             yes,
         } => init::init(
@@ -257,6 +264,7 @@ fn main() -> ExitCode {
                 commit: commit.then_some(true),
                 remote,
                 push: push.then_some(true),
+                forge: no_forge.then_some(false),
                 members,
                 yes,
             },
@@ -312,7 +320,8 @@ fn main() -> ExitCode {
             dry_run,
             no_update,
             no_commit,
-        } => upgrade::upgrade(dry_run, !no_update, !no_commit, cli.json),
+            no_forge,
+        } => upgrade::upgrade(dry_run, !no_update, !no_commit, !no_forge, cli.json),
         Commands::Hook { event } => hook(&event),
         Commands::Claude(args) => start(agent::Agent::Claude, args),
         Commands::Codex(args) => start(agent::Agent::Codex, args),

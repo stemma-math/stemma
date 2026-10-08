@@ -23,6 +23,8 @@ pub struct Options {
     pub commit: Option<bool>,
     pub remote: Option<String>,
     pub push: Option<bool>,
+    /// Set the group's repository up on the forge, once `main` is pushed.
+    pub forge: Option<bool>,
     /// Members besides the person creating the library, by forge account.
     pub members: Vec<String>,
     /// Take every default without asking.
@@ -235,6 +237,13 @@ pub fn init(options: Options, json_output: bool) -> Result<()> {
     };
     let push =
         commit && remote.is_some() && ask.yes_no(options.push, "Push main to it?", false, false)?;
+    let set_up = push
+        && ask.yes_no(
+            options.forge,
+            "Set the repository up on the forge (rules on main, merge commits only)?",
+            true,
+            true,
+        )?;
 
     // The files.
     let stemma_path = match &options.stemma_lean {
@@ -382,6 +391,18 @@ pub fn init(options: Options, json_output: bool) -> Result<()> {
                         "Could not push main."
                     },
                 );
+            }
+            if set_up && pushed.is_ok() {
+                let outcomes = step(
+                    interactive,
+                    json_output,
+                    "Setting the repository up…",
+                    || crate::forge::set_up(crate::forge::current().as_ref(), &dir),
+                );
+                if !json_output {
+                    crate::forge::report(&outcomes, |ok, text| report(interactive, ok, text));
+                }
+                done["forge"] = json!(outcomes);
             }
         }
     }
