@@ -6,8 +6,10 @@ mod branches;
 mod card;
 mod commands;
 mod config;
+mod forge;
 mod help;
 mod init;
+mod interact;
 mod keys;
 mod lake;
 mod library;
@@ -75,6 +77,9 @@ enum Commands {
         /// Push main to the remote.
         #[arg(long)]
         push: bool,
+        /// Do not set the repository up on the forge after pushing main.
+        #[arg(long)]
+        no_forge: bool,
         /// Another member, by forge account (repeatable). You are always one.
         #[arg(long = "member")]
         members: Vec<String>,
@@ -109,12 +114,31 @@ enum Commands {
         #[arg(long, default_value_t = 8000)]
         port: u16,
     },
-    /// Bring `main` in, and open or update the pull request.
+    /// Share your branch: bring main in, and open or update the pull request.
     Share {
         /// Share even when the pull request lacks signatures or approvals you
         /// could give it.
         #[arg(long)]
         anyway: bool,
+        /// Share up to this commit of the branch, rather than all of it.
+        #[arg(long, value_name = "COMMIT")]
+        upto: Option<String>,
+        /// The title of a new pull request.
+        #[arg(long)]
+        title: Option<String>,
+        /// The description of a new pull request.
+        #[arg(long)]
+        body: Option<String>,
+        /// What to do with commits made elsewhere on the share branch: bring them
+        /// into your branch, or discard them.
+        #[arg(long, value_enum, value_name = "WHAT")]
+        foreign: Option<share::Foreign>,
+        /// Do not build the library first: the pull request's checks still do.
+        #[arg(long)]
+        no_build: bool,
+        /// Ask nothing: take what stemma would do.
+        #[arg(long, short)]
+        yes: bool,
     },
     /// Make blind read-backs of environments' Lean, and serve a page that sets
     /// them beside their prose, for a person to read.
@@ -174,6 +198,15 @@ enum Commands {
         #[arg(long)]
         no_build: bool,
     },
+    /// Show or set the personal remote your working branches are saved to.
+    Remote {
+        /// The personal remote's URL. Working branches are saved there, and
+        /// only share branches go to the group's repository.
+        url: Option<String>,
+        /// Save working branches to the group's repository again.
+        #[arg(long)]
+        unset: bool,
+    },
     /// Move the library to this version of stemma.
     Upgrade {
         /// Show what would change without changing anything.
@@ -185,6 +218,9 @@ enum Commands {
         /// Do not commit the upgrade.
         #[arg(long)]
         no_commit: bool,
+        /// Do not set the repository up on the forge.
+        #[arg(long)]
+        no_forge: bool,
     },
     /// Hooks agents run; not meant to be called by hand.
     #[command(hide = true)]
@@ -220,6 +256,20 @@ struct AgentArgs {
     /// Print the command instead of running it.
     #[arg(long)]
     dry_run: bool,
+    /// Work on this branch: an existing one, or a new working branch
+    /// (work/<person>-<topic>) from an up-to-date main.
+    #[arg(long, value_name = "NAME")]
+    branch: Option<String>,
+    /// Work on the current branch.
+    #[arg(long, conflicts_with = "branch")]
+    here: bool,
+    /// Delete your working branches whose content is all in main, here and on
+    /// their remote.
+    #[arg(long)]
+    delete_merged: bool,
+    /// Ask nothing: take what stemma would do.
+    #[arg(long, short)]
+    yes: bool,
     /// Arguments passed on to the agent.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     args: Vec<String>,
@@ -238,8 +288,14 @@ fn hook(event: &str) -> anyhow::Result<bool> {
 }
 
 /// Starts an agent, or prints how it would be started.
-fn start(agent: agent::Agent, args: AgentArgs) -> anyhow::Result<bool> {
-    let launch = agent::prepare(agent, args.args, args.dry_run)?;
+fn start(agent: agent::Agent, args: AgentArgs, json: bool) -> anyhow::Result<bool> {
+    let request = branches::Request {
+        branch: args.branch,
+        here: args.here,
+        delete_merged: args.delete_merged,
+    };
+    let mode = interact::Mode::detect(json, args.yes);
+    let launch = agent::prepare(agent, args.args, args.dry_run, &request, mode)?;
     if args.dry_run {
         let value = serde_json::json!({
             "program": launch.program, "args": launch.args,
@@ -248,7 +304,9 @@ fn start(agent: agent::Agent, args: AgentArgs) -> anyhow::Result<bool> {
         println!("{}", serde_json::to_string_pretty(&value)?);
         return Ok(true);
     }
-    if let Some(branch) = &launch.branch {
+    if let Some(branch) = &launch.branch
+        && !mode.interactive()
+    {
         ui::note(format!("Working on the branch {branch}."));
     }
     launch.run()
@@ -274,6 +332,7 @@ fn main() -> ExitCode {
             commit,
             remote,
             push,
+            no_forge,
             members,
             yes,
         } => init::init(
@@ -288,6 +347,7 @@ fn main() -> ExitCode {
                 commit: commit.then_some(true),
                 remote,
                 push: push.then_some(true),
+                forge: no_forge.then_some(false),
                 members,
                 yes,
             },
@@ -336,7 +396,26 @@ fn main() -> ExitCode {
             },
             cli.json,
         ),
-        Commands::Share { anyway } => share::share(anyway, cli.json),
+        Commands::Share {
+            anyway,
+            upto,
+            title,
+            body,
+            foreign,
+            no_build,
+            yes,
+        } => share::share(
+            share::Options {
+                anyway,
+                upto,
+                title,
+                body,
+                yes,
+                foreign,
+                build: !no_build,
+            },
+            cli.json,
+        ),
         Commands::Sign {
             labels,
             base,
@@ -355,10 +434,12 @@ fn main() -> ExitCode {
             dry_run,
             no_update,
             no_commit,
-        } => upgrade::upgrade(dry_run, !no_update, !no_commit, cli.json),
+            no_forge,
+        } => upgrade::upgrade(dry_run, !no_update, !no_commit, !no_forge, cli.json),
+        Commands::Remote { url, unset } => branches::remote_command(url, unset, cli.json),
         Commands::Hook { event } => hook(&event),
-        Commands::Claude(args) => start(agent::Agent::Claude, args),
-        Commands::Codex(args) => start(agent::Agent::Codex, args),
+        Commands::Claude(args) => start(agent::Agent::Claude, args, cli.json),
+        Commands::Codex(args) => start(agent::Agent::Codex, args, cli.json),
     };
     match result {
         Ok(true) => ExitCode::SUCCESS,

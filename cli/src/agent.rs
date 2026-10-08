@@ -53,8 +53,7 @@ const FORBIDDEN_COMMANDS: &[&str] = &[
     "git push origin HEAD:main",
 ];
 
-/// The environment variable that marks a process as part of an agent's session.
-pub const SESSION_VARIABLE: &str = "STEMMA_SESSION";
+pub use crate::interact::SESSION_VARIABLE;
 
 /// The agents `stemma` can start.
 #[derive(Clone, Copy)]
@@ -204,19 +203,11 @@ fn prepare_codex(library: &Library) -> Vec<String> {
     ]
 }
 
-/// The person's handle: their GitHub login when `gh` knows it, otherwise
-/// their git name, simplified.
+/// The person's handle: their account on the forge when it is known,
+/// otherwise their git name, simplified.
 pub fn person() -> String {
-    let gh = Command::new("gh")
-        .args(["api", "user", "--jq", ".login"])
-        .output();
-    if let Ok(out) = gh
-        && out.status.success()
-    {
-        let login = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if !login.is_empty() {
-            return login;
-        }
+    if let Some(login) = crate::forge::current().login() {
+        return login;
     }
     let name = Command::new("git")
         .args(["config", "user.name"])
@@ -232,22 +223,15 @@ pub fn person() -> String {
     if slug.is_empty() { "me".into() } else { slug }
 }
 
-/// Moves from `main` to the person's working branch, creating it the first time.
-fn ensure_working_branch(dir: &Path) -> Result<Option<String>> {
-    let Some(branch) = crate::branches::current(dir) else {
-        return Ok(None);
-    };
-    if branch != "main" {
-        return Ok(Some(branch));
-    }
-    let working = format!("work/{}", person());
-    crate::branches::switch_to(dir, &working)?;
-    Ok(Some(working))
-}
-
 /// Prepares the session of an agent in the library containing the current
 /// directory.
-pub fn prepare(agent: Agent, extra: Vec<String>, dry_run: bool) -> Result<Launch> {
+pub fn prepare(
+    agent: Agent,
+    extra: Vec<String>,
+    dry_run: bool,
+    branch: &crate::branches::Request,
+    mode: crate::interact::Mode,
+) -> Result<Launch> {
     let library = Library::find(Path::new("."))?;
     if !dry_run && crate::agents_md::ensure(&library.dir, &library.config.library.title)? {
         crate::ui::note("Updated the block stemma keeps in AGENTS.md.");
@@ -260,7 +244,7 @@ pub fn prepare(agent: Agent, extra: Vec<String>, dry_run: bool) -> Result<Launch
     let branch = if dry_run {
         crate::branches::current(&library.dir)
     } else {
-        ensure_working_branch(&library.dir)?
+        crate::branches::choose(&library.dir, branch, mode)?
     };
     let program = match agent {
         Agent::Claude => "claude",
