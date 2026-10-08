@@ -274,7 +274,7 @@ fn offer_registration(library: &Library, key: &str) -> Result<bool> {
         r.member, r.branch
     ))?;
     for line in crate::keys::after_registration(&r) {
-        cliclack::log::info(line)?;
+        cliclack::log::info(crate::card::fill(&line))?;
     }
     cliclack::outro("Registered, not signed: run `stemma sign` again once the change is merged.")?;
     Ok(true)

@@ -67,6 +67,11 @@ fn width() -> usize {
     (columns as usize).saturating_sub(6).clamp(40, MAX_WIDTH)
 }
 
+/// Text wrapped to the width of cliclack's frame.
+pub fn fill(text: &str) -> String {
+    textwrap::fill(text, width())
+}
+
 /// The Lean worth reading before signing: no code fences; for a statement,
 /// each declaration up to its proof, which no signature covers.
 pub fn statement(lean: &str, base: &str) -> String {
