@@ -130,18 +130,6 @@ pub fn current() -> Box<dyn Forge> {
     }
 }
 
-/// The open pull request from `head`, if there is one.
-pub fn open_pull_request_from(
-    forge: &dyn Forge,
-    dir: &Path,
-    head: &str,
-) -> Result<Option<PullRequest>> {
-    Ok(forge
-        .pull_requests(dir, &[head])?
-        .into_iter()
-        .find(|pr| pr.state == State::Open && pr.head == head))
-}
-
 /// Sets the group's repository up, step by step. A step that fails does not
 /// stop the others; its outcome says why.
 pub fn set_up(forge: &dyn Forge, dir: &Path) -> Vec<Outcome> {
@@ -587,13 +575,10 @@ mod tests {
             )
             .unwrap();
         assert_eq!(pr.number, 1);
-        let found = open_pull_request_from(&forge, dir, "share/alice").unwrap();
-        assert_eq!(found.map(|p| p.number), Some(1));
-        assert!(
-            open_pull_request_from(&forge, dir, "share/bob")
-                .unwrap()
-                .is_none()
-        );
+        let found = forge.pull_requests(dir, &["share/alice"]).unwrap();
+        assert_eq!(found[0].number, 1);
+        assert_eq!(found[0].state, State::Open);
+        assert!(forge.pull_requests(dir, &["share/bob"]).unwrap().is_empty());
         let outcomes = set_up(&forge, dir);
         assert!(outcomes.iter().all(|o| o.error.is_none()));
         set_up(&forge, dir);

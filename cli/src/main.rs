@@ -112,12 +112,31 @@ enum Commands {
         #[arg(long, default_value_t = 8000)]
         port: u16,
     },
-    /// Bring `main` in, and open or update the pull request.
+    /// Share your branch: bring main in, and open or update the pull request.
     Share {
         /// Share even when the pull request lacks signatures or approvals you
         /// could give it.
         #[arg(long)]
         anyway: bool,
+        /// Share up to this commit of the branch, rather than all of it.
+        #[arg(long, value_name = "COMMIT")]
+        upto: Option<String>,
+        /// The title of a new pull request.
+        #[arg(long)]
+        title: Option<String>,
+        /// The description of a new pull request.
+        #[arg(long)]
+        body: Option<String>,
+        /// What to do with commits made elsewhere on the share branch: bring them
+        /// into your branch, or discard them.
+        #[arg(long, value_enum, value_name = "WHAT")]
+        foreign: Option<share::Foreign>,
+        /// Do not build the library first: the pull request's checks still do.
+        #[arg(long)]
+        no_build: bool,
+        /// Ask nothing: take what stemma would do.
+        #[arg(long, short)]
+        yes: bool,
     },
     /// Make blind read-backs of environments' Lean, and show them beside their prose.
     Readback {
@@ -340,7 +359,26 @@ fn main() -> ExitCode {
             },
             cli.json,
         ),
-        Commands::Share { anyway } => share::share(anyway, cli.json),
+        Commands::Share {
+            anyway,
+            upto,
+            title,
+            body,
+            foreign,
+            no_build,
+            yes,
+        } => share::share(
+            share::Options {
+                anyway,
+                upto,
+                title,
+                body,
+                yes,
+                foreign,
+                build: !no_build,
+            },
+            cli.json,
+        ),
         Commands::Sign {
             labels,
             base,
