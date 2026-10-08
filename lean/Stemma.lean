@@ -1,4 +1,7 @@
 import Stemma.Genre
+import Stemma.BibTeX
+import Stemma.Xref
+import Stemma.Bibliography
 import Stemma.Environment.Record
 import Stemma.Environment.Obligations
 import Stemma.Environment.Directive

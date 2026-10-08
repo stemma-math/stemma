@@ -5,7 +5,7 @@ open Verso.Genre Manual InlineLean Stemma
 
 #doc (Stemma) "Failure" =>
 
-:::definition (label := "postulated") (central := false) (cited := "Nobody")
+:::definition (label := "postulated") (central := false) (cited := "Folklore")
 An object postulated, not defined.
 
 ```lean
