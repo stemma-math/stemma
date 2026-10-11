@@ -29,8 +29,8 @@ library's Lean name, for example `Algebra`.
 │   └── <label>.toml
 ├── readings/              # curated readings: guides, papers (reserved)
 │   └── <reading>/
-├── sources/               # plans for formalizing existing sources
-│   └── <source>/          # source.toml, and one <part>.toml per part
+├── scratch/               # the group's working material: notes, drafts
+├── sources/               # each person's copies of material (not in git)
 ├── .github/               # the forge's checks and rules (GitHub)
 ├── AGENTS.md              # the group's instructions for agents
 ├── README.md
@@ -48,7 +48,8 @@ Who writes each entry:
 | `references.bib` | agents; every entry checked by a person |
 | `signatures/` | the signing step only, never an agent |
 | `readings/` | agents, and people who want to |
-| `sources/` | agents, and people who want to |
+| `scratch/` | people, and agents |
+| `sources/` | each person, for themselves |
 | `AGENTS.md` | the group, except a block at its top that `stemma` writes |
 | `.github/`, `.gitignore` | `stemma` only |
 
@@ -125,53 +126,32 @@ state (§3) when the site has it: `stemma preview` writes it, computed from
 `signatures/`, to `stemma-state.json` beside the pages. A site built without
 that file shows the marks and no state.
 
-### Source plans
+### Working material
 
-When a library formalizes an existing source (a book it builds on, a paper,
-notes), `sources/` holds the plan, versioned with the library so that the
-group shares one view of what is covered, by whom. Each source is a directory
-`sources/<source>/` with a `source.toml` and one file per part of the source
-(a chapter, say), so that members working on different parts do not
-conflict:
+A library is built from more than itself: the works it builds on, and the
+group's own notes and drafts. Neither gives the library its shape: its
+structure is decided by the mathematics (§1, "Organization is free"), not by
+the form of a book or of a draft.
 
-```toml
-# sources/burris/source.toml
-title = "A Course in Universal Algebra"
-cite = "BurrisSankappanavar"   # optional: its key in references.bib
-phase = "initial"              # planning, initial or ended
-scope = "Chapters I and II: every numbered definition and result; no exercises."
-reuse = "Mathlib's lattices; the library's own algebras."   # optional
-conventions = "Operations are `Fin n → α → α`."             # optional
-```
-
-```toml
-# sources/burris/ch2.toml
-title = "II. The elements of universal algebra"
-owner = "alice"                # optional: the owner of its items, unless they say
-
-[[item]]
-ref = "Thm. II.3.5"            # where in the source; unique in the source
-kind = "statement"             # definition, statement, proof, remark, notation, example or exercise
-state = "blocked"              # planned, in-progress, done, blocked or excluded
-owner = "bob"                  # a member
-labels = ["burris.hom-thm"]    # the environments that cover it
-depends = ["Def. II.1.1"]      # refs of items of the same source
-reason = "Needs Thm. I.4.12, which is out of scope."   # for blocked and excluded
-```
-
-- The `phase` says where the group is: agreeing the plan (`planning`),
-  formalizing the source, part by part (`initial`), or done with that
-  (`ended`), which the group declares explicitly.
-- `stemma check` validates every plan, strictly: unknown fields, states,
-  kinds or phases are errors; an item `done` names its environments, which
-  must exist; one `blocked` or `excluded` says why; one `in-progress` has an
-  owner; owners are members (§1, "Configuration"); dependencies name items of
-  the same source and form no cycle; `cite` is a key of `references.bib`.
-- `stemma status` shows each source's coverage, by part and by owner: how
-  many items are planned, in progress, done, blocked or excluded, and how many
-  of those done are **proved**, that is, all their environments proved, with
-  no `sorry` and no accepted assumption. Coverage is never counted as proved
-  otherwise.
+- **References** are the fixed works the library relies on: the entries of
+  `references.bib`. Prose and `cited` marks cite only them, and only they can
+  be cited with a place in the work (`Thm. 3.24`).
+- **`sources/`** holds each person's copies of material: the files of
+  references, including those whose license does not allow sharing them, and
+  anything else they want at hand. git ignores it, so each person keeps in it
+  what they have, and nothing in it is shared.
+- **`scratch/`** holds the group's working material, versioned and shared:
+  notes, drafts in LaTeX, Typst or Markdown, and intentions for the work to
+  come. Agents read it, and its history says where the work is heading. It is
+  not cited, and the library does not follow its structure or its numbering.
+  A draft the group wants to cite becomes an entry of `references.bib`.
+- The layout of `scratch/` is free. `stemma init` can set up a recommended
+  one: `scratch/share/main.<ext>` for the group, and
+  `scratch/<member>/main.<ext>` for each member, in Markdown, LaTeX or Typst.
+  The build output of LaTeX and Typst is ignored; a `.gitignore` inside
+  `scratch/` can bring back a file the library's `.gitignore` leaves out.
+- `stemma check` does not read `scratch/` or `sources/`, and the site does not
+  show them.
 
 ### Agent instructions are not copied into the library
 
@@ -890,20 +870,23 @@ The first forge Stemma supports is GitHub:
 
 - **Skills** teach the agent to write documents and environments, create
   modules, share work, resolve conflicts, prepare signatures, ask for
-  read-backs, and formalize a source faithfully, alone or as a group, with
-  its plan (§1, "Source plans"): the scope and the reuse of Mathlib agreed
-  once with the person, work in batches without asking to continue after each
-  one, and questions only for decisions that change meaning, ambiguities of
-  the source, missing hypotheses or blocking dependencies.
+  read-backs, and work from the group's material (§1, "Working material"):
+  build the library the mathematics calls for rather than follow a book or a
+  draft, cite only references, and read `scratch/` and its history for where
+  the work is heading. When the person asks to formalize a reference, its
+  scope and the reuse of Mathlib are agreed once with them, the work goes on
+  in batches without asking to continue after each one, and questions are
+  kept for decisions that change meaning, ambiguities of the reference,
+  missing hypotheses or blocking dependencies.
 
 ## 6. Command line
 
 | Command | What it does |
 |---|---|
-| `stemma init` | Creates a library: layout, `stemma.toml`, dependencies, git and its remote; in a terminal it asks what it needs |
+| `stemma init` | Creates a library: layout, `stemma.toml`, dependencies, git and its remote, and, when asked, the recommended layout of `scratch/` (`--scratch md`, `tex` or `typ`); in a terminal it asks what it needs |
 | `stemma new` | Creates a module (document or Lean) and adds it to the table of contents |
 | `stemma check` | Runs every check of this specification |
-| `stemma status` | Shows states: not formalized, pending, signatures, distance from `main`, and the coverage of source plans |
+| `stemma status` | Shows states: not formalized, pending, signatures, distance from `main` |
 | `stemma preview` | Builds the site and serves it locally |
 | `stemma share` | Shares the working branch through its share branch: brings `main` in, and opens or updates the pull request |
 | `stemma remote` | Shows or sets the personal remote working branches are saved to |

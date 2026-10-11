@@ -19,11 +19,16 @@ they ask; but answer plainly when they do.
 - `<Library>.lean` is the **table of contents**: it imports every module once,
   in reading order.
 - `stemma.toml` holds the library's configuration and the group's members.
-- `sources/` holds the plans for formalizing existing sources (books,
-  papers), one directory per source.
+- `references.bib` holds the references, the only material the library
+  cites. `scratch/` holds the group's notes and drafts: read them for where
+  the work is heading, without copying their structure or citing them.
+  `sources/` holds the person's own copies (PDFs): git ignores it, so list
+  and read it directly.
+- You are building a library, not transcribing a document: its structure is
+  decided by the mathematics, not by a book or a draft.
 
 The skills `stemma-mathematics`, `stemma-documents`, `stemma-sharing`,
-`stemma-signatures` and `stemma-sources` say how to work. Read the relevant
+`stemma-signatures` and `stemma-material` say how to work. Read the relevant
 one before acting.
 
 ## Rules

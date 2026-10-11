@@ -1826,7 +1826,7 @@ fn every_harness_gets_the_equipment_and_the_session_variable() {
         "stemma-documents",
         "stemma-sharing",
         "stemma-signatures",
-        "stemma-sources",
+        "stemma-material",
     ];
 
     // The neutral equipment, for any harness, and to equip one by hand.
