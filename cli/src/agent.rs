@@ -55,8 +55,8 @@ pub const SKILLS: &[(&str, &str)] = &[
         include_str!("../agent/skills/stemma-signatures/SKILL.md"),
     ),
     (
-        "stemma-sources",
-        include_str!("../agent/skills/stemma-sources/SKILL.md"),
+        "stemma-material",
+        include_str!("../agent/skills/stemma-material/SKILL.md"),
     ),
 ];
 
@@ -537,7 +537,7 @@ mod tests {
             "# Doing mathematics",
             "# Saving and sharing",
             "# Signatures",
-            "# Formalizing a source",
+            "# Working from material",
         ] {
             assert!(text.contains(heading), "missing {heading}");
         }

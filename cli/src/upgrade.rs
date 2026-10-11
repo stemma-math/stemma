@@ -4,6 +4,7 @@
 //! files only `stemma` writes, from this version's templates, and updates the
 //! dependencies. The result is one change, meant for one pull request.
 
+use std::collections::HashSet;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
@@ -16,6 +17,9 @@ use crate::commands::{LEAN_TOOLCHAIN, REFERENCES, STEMMA_GIT, mathlib_rev};
 use crate::config::Config;
 use crate::library::Library;
 use crate::{agents_md, templates, ui};
+
+/// Each person's copies of material, which git ignores.
+const SOURCES: &str = "sources";
 
 /// A version, as `major.minor.patch`.
 pub type Version = (u64, u64, u64);
@@ -151,7 +155,49 @@ const MIGRATIONS: &[Migration] = &[
             change of the policy",
         apply: |files, _| site_publish(&mut files.config),
     },
+    Migration {
+        version: (0, 5, 0),
+        description: "source plans are gone: `sources/` holds each person's copies of \
+            material, which git ignores, and what the library kept in it moves to \
+            `scratch/share/`, the group's working material",
+        // The move is a change of files: `plan` works it out.
+        apply: |_, _| {},
+    },
 ];
+
+/// The library's `.gitignore` with every rule of `template` it lacks, each
+/// block of them under the comment that introduces it in the template. The
+/// group's own rules stay.
+fn merged_gitignore(existing: &str, template: &str) -> String {
+    let have: HashSet<&str> = existing.lines().map(str::trim).collect();
+    let mut out = existing.to_string();
+    for block in template.split("\n\n") {
+        let missing: Vec<&str> = block
+            .lines()
+            .filter(|l| !l.starts_with('#') && !l.trim().is_empty() && !have.contains(l.trim()))
+            .collect();
+        if missing.is_empty() {
+            continue;
+        }
+        if !out.is_empty() {
+            if !out.ends_with('\n') {
+                out.push('\n');
+            }
+            out.push('\n');
+        }
+        for line in block.lines().filter(|l| l.starts_with('#')).chain(missing) {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+/// Where a file `git` tracks in `sources/` moves to, in `scratch/share/`.
+fn moved_source(file: &str) -> Option<String> {
+    file.strip_prefix(&format!("{SOURCES}/"))
+        .map(|rest| format!("scratch/share/{rest}"))
+}
 
 /// Writes `[site] publish = false`, unless the library says already what it
 /// wants.
@@ -203,6 +249,15 @@ struct Plan {
     /// Files whose content changes.
     changed: Vec<String>,
     writes: Vec<(String, String)>,
+    /// Files `git` tracks in `sources/`, and where they move.
+    moves: Vec<(String, String)>,
+}
+
+impl Plan {
+    /// Whether the upgrade changes nothing.
+    fn is_empty(&self) -> bool {
+        self.changed.is_empty() && self.moves.is_empty()
+    }
 }
 
 /// Works out the upgrade of a library, without writing anything.
@@ -286,6 +341,33 @@ fn plan(library: &Library) -> Result<Plan> {
     if read(REFERENCES).is_none() {
         writes.push((REFERENCES.to_string(), String::new()));
     }
+    // The rules of this version's `.gitignore`, added to the group's.
+    writes.push((
+        ".gitignore".to_string(),
+        merged_gitignore(
+            &read(".gitignore").unwrap_or_default(),
+            &templates::render("library/gitignore", &context)?,
+        ),
+    ));
+    // What the library kept in `sources/`, which git now ignores.
+    let tracked = Command::new("git")
+        .args(["ls-files", "-z", "--", SOURCES])
+        .current_dir(dir)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default();
+    let mut moves = Vec::new();
+    for file in tracked.split('\0').filter(|f| !f.is_empty()) {
+        let Some(to) = moved_source(file) else {
+            continue;
+        };
+        if dir.join(&to).exists() {
+            bail!("{file} cannot move to {to}, which exists: move it by hand, then upgrade");
+        }
+        moves.push((file.to_string(), to));
+    }
     let changed = writes
         .iter()
         .filter(|(file, text)| read(file).as_deref() != Some(text.as_str()))
@@ -296,6 +378,7 @@ fn plan(library: &Library) -> Result<Plan> {
         migrations,
         changed,
         writes,
+        moves,
     })
 }
 
@@ -391,10 +474,15 @@ pub fn upgrade(options: Options, json_output: bool) -> Result<bool> {
     let to = env!("CARGO_PKG_VERSION");
     let dir = &library.dir;
     let interactive = crate::interact::Mode::detect(json_output, yes).interactive();
-    if interactive && !dry_run && !plan.changed.is_empty() {
+    if interactive && !dry_run && !plan.is_empty() {
         crate::interact::intro("upgrade")?;
         let mut lines: Vec<String> = plan.migrations.iter().map(|m| format!("- {m}.")).collect();
         lines.extend(plan.changed.iter().map(|f| format!("- Write {f}.")));
+        lines.extend(
+            plan.moves
+                .iter()
+                .map(|(f, t)| format!("- Move {f} to {t}.")),
+        );
         if update {
             lines.push("- Update the dependencies (`lake update`).".into());
         }
@@ -409,13 +497,19 @@ pub fn upgrade(options: Options, json_output: bool) -> Result<bool> {
     }
     let in_git = crate::branches::current(dir).is_some();
     let mut branch = crate::branches::current(dir);
-    if !dry_run && !plan.changed.is_empty() && branch.as_deref() == Some("main") {
+    if !dry_run && !plan.is_empty() && branch.as_deref() == Some("main") {
         branch = Some(crate::branches::move_to_new(
             dir,
             &format!("upgrade/stemma-{to}"),
         )?);
     }
     if !dry_run {
+        for (from, to) in &plan.moves {
+            if let Some(parent) = library.dir.join(to).parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            git(dir, &["mv", "--", from, to])?;
+        }
         for (file, text) in &plan.writes {
             let path = library.dir.join(file);
             if let Some(parent) = path.parent() {
@@ -424,7 +518,7 @@ pub fn upgrade(options: Options, json_output: bool) -> Result<bool> {
             std::fs::write(path, text)?;
         }
     }
-    let updated = if !dry_run && update && !plan.changed.is_empty() {
+    let updated = if !dry_run && update && !plan.is_empty() {
         let spinner = ui::Spinner::start("Updating the dependencies", json_output);
         let ok = Command::new("lake")
             .arg("update")
@@ -437,14 +531,22 @@ pub fn upgrade(options: Options, json_output: bool) -> Result<bool> {
     } else {
         None
     };
-    let committed = if !dry_run && commit && in_git && !plan.changed.is_empty() {
+    let committed = if !dry_run && commit && in_git && !plan.is_empty() {
         let mut files: Vec<&str> = plan.changed.iter().map(String::as_str).collect();
         if dir.join("lake-manifest.json").exists() {
             files.push("lake-manifest.json");
         }
         let mut add = vec!["add", "--"];
         add.extend(&files);
-        git(dir, &add)?;
+        if !files.is_empty() {
+            git(dir, &add)?;
+        }
+        // The moves are staged already, by `git mv`.
+        files.extend(
+            plan.moves
+                .iter()
+                .flat_map(|(f, t)| [f.as_str(), t.as_str()]),
+        );
         let message = format!("Upgrade to stemma {to}");
         let mut commit_args = vec!["commit", "--quiet", "-m", &message, "--"];
         commit_args.extend(&files);
@@ -458,11 +560,13 @@ pub fn upgrade(options: Options, json_output: bool) -> Result<bool> {
     } else {
         None
     };
-    let next = (!dry_run && !plan.changed.is_empty()).then(|| next_steps(committed));
+    let next = (!dry_run && !plan.is_empty()).then(|| next_steps(committed));
     if json_output {
         let value = json!({
             "from": plan.from, "to": to, "dry_run": dry_run,
-            "migrations": plan.migrations, "changed": plan.changed, "updated": updated,
+            "migrations": plan.migrations, "changed": plan.changed,
+            "moved": plan.moves.iter().map(|(f, t)| json!({"from": f, "to": t})).collect::<Vec<_>>(),
+            "updated": updated,
             "branch": branch, "committed": committed, "forge": forge, "next": next,
         });
         println!("{}", serde_json::to_string_pretty(&value)?);
@@ -479,7 +583,7 @@ pub fn upgrade(options: Options, json_output: bool) -> Result<bool> {
             });
         }
     };
-    if plan.changed.is_empty() {
+    if plan.is_empty() {
         say(
             interactive,
             Line::Success,
@@ -505,6 +609,10 @@ pub fn upgrade(options: Options, json_output: bool) -> Result<bool> {
         }
         for f in &plan.changed {
             ui::note(format!("{changed} {f}."));
+        }
+        let moved = if dry_run { "Would move" } else { "Moved" };
+        for (f, t) in &plan.moves {
+            ui::note(format!("{moved} {f} to {t}."));
         }
     }
     report_forge(&forge);
@@ -538,6 +646,19 @@ pub fn upgrade(options: Options, json_output: bool) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_gitignore_gains_the_rules_it_lacks_and_keeps_the_groups() {
+        let template = "# Lean.\n/.lake/\n\n# Material.\n/sources/\n\n# Typst.\n*.pdf\n";
+        let ours = "/.lake/\n*.bak\n";
+        let merged = merged_gitignore(ours, template);
+        assert_eq!(
+            merged,
+            "/.lake/\n*.bak\n\n# Material.\n/sources/\n\n# Typst.\n*.pdf\n"
+        );
+        assert_eq!(merged_gitignore(&merged, template), merged);
+        assert_eq!(merged_gitignore("", template), template);
+    }
 
     #[test]
     fn parses_versions() {

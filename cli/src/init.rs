@@ -29,8 +29,37 @@ pub struct Options {
     pub forge: Option<bool>,
     /// Members besides the person creating the library, by forge account.
     pub members: Vec<String>,
+    /// The format of the recommended layout of `scratch/`, or none.
+    pub scratch: Option<Scratch>,
     /// Take every default without asking.
     pub yes: bool,
+}
+
+/// The format of the recommended layout of `scratch/`: a `main` file for
+/// the group, in `scratch/share/`, and one for each member, in
+/// `scratch/<member>/`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum Scratch {
+    /// Markdown.
+    Md,
+    /// LaTeX.
+    Tex,
+    /// Typst.
+    Typ,
+    /// No layout: `scratch/` is left to the group.
+    None,
+}
+
+impl Scratch {
+    /// The extension of its files, if it has any.
+    fn extension(self) -> Option<&'static str> {
+        match self {
+            Scratch::Md => Some("md"),
+            Scratch::Tex => Some("tex"),
+            Scratch::Typ => Some("typ"),
+            Scratch::None => None,
+        }
+    }
 }
 
 /// The library name a directory suggests: `group-theory` gives `GroupTheory`.
@@ -212,6 +241,25 @@ pub fn init(options: Options, json_output: bool) -> Result<()> {
             members.push(m);
         }
     }
+    let scratch = match options.scratch {
+        Some(s) => s,
+        None if !interactive => Scratch::None,
+        None => crate::interact::select(
+            "Set scratch/ up with the recommended layout? (a main file for the group, and one \
+             for each member)",
+            &[
+                (Scratch::Md, "Markdown".into(), String::new()),
+                (Scratch::Tex, "LaTeX".into(), String::new()),
+                (Scratch::Typ, "Typst".into(), String::new()),
+                (
+                    Scratch::None,
+                    "No".into(),
+                    "leave scratch/ to the group".into(),
+                ),
+            ],
+            Some(Scratch::Md),
+        )?,
+    };
     let mathlib = ask.yes_no(options.mathlib, "Build on Mathlib?", true, true)?;
     let publish = ask.yes_no(
         options.publish,
@@ -297,6 +345,24 @@ pub fn init(options: Options, json_output: bool) -> Result<()> {
     for (file, template) in files {
         std::fs::write(dir.join(file), templates::render(template, &context)?)?;
         written.push(file.to_string());
+    }
+    // The recommended layout of `scratch/`: the group's notes and drafts.
+    if let Some(ext) = scratch.extension() {
+        let template = format!("scratch/main.{ext}");
+        let owners = std::iter::once(("share", format!("{title}: shared notes"))).chain(
+            members
+                .iter()
+                .map(|m| (m.as_str(), format!("{title}: {m}'s notes"))),
+        );
+        for (owner, heading) in owners {
+            let file = format!("scratch/{owner}/main.{ext}");
+            std::fs::create_dir_all(dir.join("scratch").join(owner))?;
+            std::fs::write(
+                dir.join(&file),
+                templates::render(&template, json!({ "heading": heading }))?,
+            )?;
+            written.push(file);
+        }
     }
     std::fs::write(dir.join("lean-toolchain"), LEAN_TOOLCHAIN)?;
     std::fs::write(dir.join("AGENTS.md"), agents_md::initial(&title))?;

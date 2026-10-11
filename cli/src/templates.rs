@@ -38,6 +38,18 @@ const TEMPLATES: &[(&str, &str)] = &[
         include_str!("../templates/module/lean.lean.jinja"),
     ),
     (
+        "scratch/main.md",
+        include_str!("../templates/scratch/main.md.jinja"),
+    ),
+    (
+        "scratch/main.tex",
+        include_str!("../templates/scratch/main.tex.jinja"),
+    ),
+    (
+        "scratch/main.typ",
+        include_str!("../templates/scratch/main.typ.jinja"),
+    ),
+    (
         "site/StemmaSite.lean",
         include_str!("../templates/site/StemmaSite.lean.jinja"),
     ),
