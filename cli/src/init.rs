@@ -8,6 +8,7 @@ use anyhow::{Context, Result, bail};
 use serde_json::json;
 
 use crate::commands::{LEAN_TOOLCHAIN, REFERENCES, STEMMA_GIT, mathlib_rev};
+use crate::config::{FORGEJO_RUNNER, ForgeKind};
 use crate::{agents_md, library, templates, ui};
 
 /// Options of `stemma init`. What is `None` is asked in a terminal, and takes
@@ -31,6 +32,12 @@ pub struct Options {
     pub members: Vec<String>,
     /// The format of the recommended layout of `scratch/`, or none.
     pub scratch: Option<Scratch>,
+    /// The kind of forge that hosts the group's repository.
+    pub forge_kind: Option<ForgeKind>,
+    /// The address of the Forgejo instance.
+    pub forge_url: Option<String>,
+    /// The label of the runners of the Forgejo instance.
+    pub forge_runner: Option<String>,
     /// Take every default without asking.
     pub yes: bool,
 }
@@ -223,9 +230,60 @@ pub fn init(options: Options, json_output: bool) -> Result<()> {
         bail!("'{name}' is not a valid Lean name for a library");
     }
     let title = ask.text(options.title, "Its title", &name)?;
+    // The forge: an instance's URL means Forgejo.
+    let kind = match options.forge_kind {
+        Some(k) => k,
+        None if options.forge_url.is_some() => ForgeKind::Forgejo,
+        None if !interactive => ForgeKind::GitHub,
+        None => crate::interact::select(
+            "Where will the group's repository be?",
+            &[
+                (ForgeKind::GitHub, "GitHub".into(), String::new()),
+                (
+                    ForgeKind::Forgejo,
+                    "Forgejo".into(),
+                    "Codeberg, or an instance of your own".into(),
+                ),
+            ],
+            Some(ForgeKind::GitHub),
+        )?,
+    };
+    let forge_config = match kind {
+        ForgeKind::GitHub => crate::config::Forge::default(),
+        ForgeKind::Forgejo => {
+            let url = match options.forge_url {
+                Some(u) => u,
+                None if !interactive => bail!(
+                    "a Forgejo forge needs its address: pass --forge-url, such as \
+                     https://codeberg.org"
+                ),
+                None => cliclack::input("The address of the Forgejo instance")
+                    .placeholder("https://codeberg.org")
+                    .validate(|u: &String| {
+                        if u.trim().starts_with("https://") || u.trim().starts_with("http://") {
+                            Ok(())
+                        } else {
+                            Err("an address such as https://codeberg.org")
+                        }
+                    })
+                    .interact()?,
+            };
+            let runner = ask.text(
+                options.forge_runner,
+                "The label of the runners its workflows run on",
+                FORGEJO_RUNNER,
+            )?;
+            crate::config::Forge {
+                kind,
+                url: Some(url.trim().trim_end_matches('/').to_string()),
+                runner: Some(runner.trim().to_string()),
+            }
+        }
+    };
+    let host = crate::forge::of(&forge_config);
     // The person creating the library is its first member, so that someone can
     // approve the changes the policy reserves to maintainers.
-    let creator = crate::agent::person();
+    let creator = crate::agent::person_on(host.as_ref());
     let my_key = crate::keys::signing_key(Path::new("."));
     let mut members = vec![ask.text(None, "Your account on the forge", &creator)?];
     let others = if options.members.is_empty() {
@@ -261,12 +319,16 @@ pub fn init(options: Options, json_output: bool) -> Result<()> {
         )?,
     };
     let mathlib = ask.yes_no(options.mathlib, "Build on Mathlib?", true, true)?;
-    let publish = ask.yes_no(
-        options.publish,
-        "Publish the library's site to GitHub Pages, from main?",
-        false,
-        false,
-    )?;
+    if kind == ForgeKind::Forgejo && options.publish == Some(true) {
+        bail!("Forgejo has no Pages to publish the site to");
+    }
+    let publish = kind == ForgeKind::GitHub
+        && ask.yes_no(
+            options.publish,
+            "Publish the library's site to GitHub Pages, from main?",
+            false,
+            false,
+        )?;
     let in_repo = dir.join(".git").exists();
     let git = !in_repo && ask.yes_no(options.git, "Create a git repository?", true, true)?;
     let update = ask.yes_no(
@@ -282,9 +344,16 @@ pub fn init(options: Options, json_output: bool) -> Result<()> {
     let commit =
         (git || in_repo) && ask.yes_no(options.commit, "Commit the new library?", true, false)?;
     let remote = if git || in_repo {
+        let server = forge_config
+            .url
+            .as_deref()
+            .and_then(|u| u.split_once("://"))
+            .map_or("github.com", |(_, rest)| {
+                rest.split(['/', ':']).next().unwrap_or(rest)
+            });
         let url = ask.optional(
             options.remote,
-            "A remote to add as origin, such as git@github.com:group/library.git",
+            &format!("A remote to add as origin, such as git@{server}:group/library.git"),
             "none",
         )?;
         (!url.trim().is_empty()).then(|| url.trim().to_string())
@@ -296,7 +365,10 @@ pub fn init(options: Options, json_output: bool) -> Result<()> {
     let set_up = push
         && ask.yes_no(
             options.forge,
-            if publish {
+            if kind == ForgeKind::Forgejo {
+                "Set the repository up on the forge (rules on main, merge commits only, Actions \
+                 on)?"
+            } else if publish {
                 "Set the repository up on the forge (rules on main, merge commits only, Pages)?"
             } else {
                 "Set the repository up on the forge (rules on main, merge commits only)?"
@@ -323,13 +395,20 @@ pub fn init(options: Options, json_output: bool) -> Result<()> {
         "mathlib": mathlib,
         "mathlib_rev": mathlib_rev(),
         "publish": publish,
+        "forgejo": kind == ForgeKind::Forgejo,
+        "forge_url": forge_config.url,
+        "runner": forge_config.runner(),
         "members": members.iter().enumerate().map(|(i, name)| json!({
             "name": name,
             // The person creating the library signs with the key git signs with.
             "keys": if i == 0 { my_key.iter().cloned().collect::<Vec<_>>() } else { vec![] },
         })).collect::<Vec<_>>(),
     });
-    for sub in [name.as_str(), ".github/workflows"] {
+    let workflow = crate::forge::workflow(kind);
+    for sub in [
+        Path::new(&name),
+        Path::new(workflow).parent().unwrap_or(Path::new("")),
+    ] {
         std::fs::create_dir_all(dir.join(sub))
             .with_context(|| format!("creating {}", dir.display()))?;
     }
@@ -339,7 +418,7 @@ pub fn init(options: Options, json_output: bool) -> Result<()> {
         (&format!("{name}.lean") as &str, "library/root.lean"),
         ("README.md", "library/README.md"),
         (".gitignore", "library/gitignore"),
-        (".github/workflows/stemma.yml", "library/github/stemma.yml"),
+        (workflow, crate::forge::workflow_template(kind)),
     ];
     let mut written = Vec::new();
     for (file, template) in files {
@@ -482,10 +561,12 @@ pub fn init(options: Options, json_output: bool) -> Result<()> {
                     interactive,
                     json_output,
                     "Setting the repository up…",
-                    || crate::forge::set_up(crate::forge::current().as_ref(), &dir),
+                    || crate::forge::set_up(host.as_ref(), &dir),
                 );
                 if !json_output {
-                    crate::forge::report(&outcomes, |ok, text| report(interactive, ok, text));
+                    crate::forge::report(host.as_ref(), &outcomes, |ok, text| {
+                        report(interactive, ok, text)
+                    });
                 }
                 done["forge"] = json!(outcomes);
             }

@@ -2,9 +2,14 @@
 //! who the person is there, finding and opening pull requests, and setting the
 //! repository up. No other module talks to a forge.
 //!
-//! The forge is chosen by `STEMMA_FORGE`:
+//! The library chooses its forge in `stemma.toml` (`[forge]`):
 //!
 //! - `github` (the default): GitHub, through its command line, `gh`;
+//! - `forgejo`: a Forgejo instance (Codeberg, or a group's own), through its
+//!   API, at `[forge] url`.
+//!
+//! `STEMMA_FORGE` overrides it:
+//!
 //! - `none`: no forge; pull requests are opened by hand;
 //! - `file:<path>`: a forge kept in a JSON file, for tests and rehearsals. It
 //!   records what it is asked to do, and never touches the network.
@@ -15,6 +20,8 @@ use std::process::{Command, Stdio};
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+
+use crate::config::ForgeKind;
 
 /// The variable that chooses the forge.
 pub const FORGE_VARIABLE: &str = "STEMMA_FORGE";
@@ -64,16 +71,38 @@ pub enum Step {
 }
 
 /// The names of the required checks: the jobs of the workflow `stemma`
-/// writes (`.github/workflows/stemma.yml`).
+/// writes (see [`workflow`]).
 pub const REQUIRED_CHECKS: &[&str] = &["Stemma verify", "Stemma check"];
+
+/// The workflow `stemma` writes for a kind of forge, relative to the library.
+pub fn workflow(kind: ForgeKind) -> &'static str {
+    match kind {
+        ForgeKind::GitHub => ".github/workflows/stemma.yml",
+        ForgeKind::Forgejo => ".forgejo/workflows/stemma.yml",
+    }
+}
+
+/// The template of the workflow for a kind of forge.
+pub fn workflow_template(kind: ForgeKind) -> &'static str {
+    match kind {
+        ForgeKind::GitHub => "library/github/stemma.yml",
+        ForgeKind::Forgejo => "library/forgejo/stemma.yml",
+    }
+}
+
+/// The directories of every forge's configuration, whichever the library
+/// uses: changing them is a change of the policy, and agents may not.
+pub const FORGE_DIRS: &[&str] = &[".github", ".forgejo"];
 
 impl Step {
     /// Every step, in the order they are applied.
     pub const ALL: &'static [Step] = &[Step::Rules, Step::MergeCommits, Step::Pages];
 
-    /// The steps a library needs: Pages only when it publishes its site.
+    /// The steps a library needs: Pages only when it publishes its site, on
+    /// GitHub.
     pub fn for_library(dir: &Path) -> Vec<Step> {
-        let publish = crate::config::Config::read(dir).is_ok_and(|c| c.site.publish);
+        let publish = crate::config::Config::read(dir)
+            .is_ok_and(|c| c.site.publish && c.forge.kind == ForgeKind::GitHub);
         Self::ALL
             .iter()
             .copied()
@@ -81,8 +110,20 @@ impl Step {
             .collect()
     }
 
-    /// What the step sets up.
-    pub fn describe(self) -> &'static str {
+    /// What the step sets up, on a kind of forge.
+    pub fn describe(self, kind: ForgeKind) -> &'static str {
+        if kind == ForgeKind::Forgejo {
+            return match self {
+                Step::Rules => {
+                    "`main` changes only through pull requests that pass the checks `Stemma \
+                     verify` and `Stemma check`: no direct or forced pushes"
+                }
+                Step::MergeCommits => {
+                    "pull requests are merged with merge commits only, and Actions are on"
+                }
+                Step::Pages => "Forgejo has no Pages: the site is not published",
+            };
+        }
         match self {
             Step::Rules => {
                 "`main` changes only through pull requests that pass the checks `Stemma verify` \
@@ -93,8 +134,23 @@ impl Step {
         }
     }
 
-    /// How a person sets it up by hand, on GitHub.
-    pub fn by_hand(self) -> &'static str {
+    /// How a person sets it up by hand, on a kind of forge.
+    pub fn by_hand(self, kind: ForgeKind) -> &'static str {
+        if kind == ForgeKind::Forgejo {
+            return match self {
+                Step::Rules => {
+                    "in the repository's Settings → Branches, add a protection rule for `main` \
+                     that disables pushing, enables status checks with the patterns \
+                     \"Stemma / Stemma verify *\" and \"Stemma / Stemma check *\", and requires \
+                     no approvals"
+                }
+                Step::MergeCommits => {
+                    "in the repository's Settings, enable Actions (Units), and under Pull \
+                     Requests allow only \"Create merge commit\" as the merge style"
+                }
+                Step::Pages => "nothing: the site is not published",
+            };
+        }
         match self {
             Step::Rules => {
                 "in the repository's Settings → Rules → Rulesets, add a ruleset named \
@@ -125,6 +181,11 @@ pub struct Outcome {
 
 /// What `stemma` asks of a forge.
 pub trait Forge {
+    /// The kind of forge, for what is said to people.
+    fn kind(&self) -> ForgeKind {
+        ForgeKind::GitHub
+    }
+
     /// The person's account on the forge, when it is known.
     fn login(&self) -> Option<String>;
 
@@ -139,14 +200,31 @@ pub trait Forge {
     fn apply(&self, dir: &Path, step: Step) -> Result<()>;
 }
 
-/// The forge of this process (see the module's documentation).
-pub fn current() -> Box<dyn Forge> {
+/// The forge of the library at `dir`, or of `STEMMA_FORGE` (see the module's
+/// documentation). Outside a library, GitHub.
+pub fn current(dir: &Path) -> Box<dyn Forge> {
+    let config = crate::library::Library::find(dir)
+        .map(|l| l.config.forge)
+        .unwrap_or_default();
+    of(&config)
+}
+
+/// The forge a `[forge]` table names, or `STEMMA_FORGE`.
+pub fn of(config: &crate::config::Forge) -> Box<dyn Forge> {
     match std::env::var(FORGE_VARIABLE).as_deref() {
-        Ok("none") => Box::new(NoForge),
-        Ok(other) if other.starts_with("file:") => Box::new(FileForge {
-            path: PathBuf::from(&other["file:".len()..]),
+        Ok("none") => return Box::new(NoForge),
+        Ok(other) if other.starts_with("file:") => {
+            return Box::new(FileForge {
+                path: PathBuf::from(&other["file:".len()..]),
+            });
+        }
+        _ => {}
+    }
+    match config.kind {
+        ForgeKind::GitHub => Box::new(GitHub),
+        ForgeKind::Forgejo => Box::new(Forgejo {
+            url: config.url.clone(),
         }),
-        _ => Box::new(GitHub),
     }
 }
 
@@ -164,19 +242,20 @@ pub fn set_up(forge: &dyn Forge, dir: &Path) -> Vec<Outcome> {
 
 /// Says what setting the repository up did, and what to set by hand, through
 /// `say(ok, text)`.
-pub fn report(outcomes: &[Outcome], say: impl Fn(bool, &str)) {
+pub fn report(forge: &dyn Forge, outcomes: &[Outcome], say: impl Fn(bool, &str)) {
+    let kind = forge.kind();
     for o in outcomes {
         match &o.error {
             None => say(
                 true,
-                &format!("Set the repository up: {}.", o.step.describe()),
+                &format!("Set the repository up: {}.", o.step.describe(kind)),
             ),
             Some(error) => say(
                 false,
                 &format!(
                     "Could not set the repository up ({error}): {}. Set it by hand: {}.",
-                    o.step.describe(),
-                    o.step.by_hand()
+                    o.step.describe(kind),
+                    o.step.by_hand(kind)
                 ),
             ),
         }
@@ -187,24 +266,33 @@ pub fn report(outcomes: &[Outcome], say: impl Fn(bool, &str)) {
 
 struct GitHub;
 
-/// `owner/name` from the URL of a GitHub repository.
-fn github_slug(url: &str) -> Option<String> {
+/// The host and `owner/name` of a repository, from its URL on any forge:
+/// `git@host:owner/name.git`, `ssh://git@host:2222/owner/name.git` or
+/// `https://host/owner/name`.
+fn remote_parts(url: &str) -> Option<(String, String)> {
     let url = url.trim();
-    let path = url
-        .strip_prefix("git@github.com:")
-        .or_else(|| url.strip_prefix("ssh://git@github.com/"))
-        .or_else(|| url.strip_prefix("https://github.com/"))
-        .or_else(|| url.strip_prefix("http://github.com/"))?;
-    let path = path.trim_end_matches('/');
+    let (authority, path) = match url.split_once("://") {
+        Some((_, rest)) => rest.split_once('/')?,
+        None => url.split_once(':')?,
+    };
+    let host = authority.rsplit('@').next()?.split(':').next()?;
+    let path = path.trim_matches('/');
     let path = path.strip_suffix(".git").unwrap_or(path);
     let mut parts = path.split('/');
     let (owner, name) = (parts.next()?, parts.next()?);
-    (parts.next().is_none() && !owner.is_empty() && !name.is_empty())
-        .then(|| format!("{owner}/{name}"))
+    (parts.next().is_none() && !host.is_empty() && !owner.is_empty() && !name.is_empty())
+        .then(|| (host.to_string(), format!("{owner}/{name}")))
 }
 
-/// The group's repository on GitHub: the one `origin` points at.
-fn repository(dir: &Path) -> Result<String> {
+/// `owner/name` from the URL of a GitHub repository.
+fn github_slug(url: &str) -> Option<String> {
+    remote_parts(url)
+        .filter(|(host, _)| host == "github.com")
+        .map(|(_, slug)| slug)
+}
+
+/// The URL of `origin`.
+fn origin(dir: &Path) -> Result<String> {
     let out = Command::new("git")
         .args(["remote", "get-url", "origin"])
         .current_dir(dir)
@@ -213,7 +301,12 @@ fn repository(dir: &Path) -> Result<String> {
     if !out.status.success() {
         bail!("the library has no remote `origin`");
     }
-    let url = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// The group's repository on GitHub: the one `origin` points at.
+fn repository(dir: &Path) -> Result<String> {
+    let url = origin(dir)?;
     github_slug(&url).ok_or_else(|| anyhow!("`origin` ({url}) is not a repository on GitHub"))
 }
 
@@ -454,6 +547,350 @@ impl Forge for GitHub {
     }
 }
 
+// Forgejo, through its API.
+
+/// The variable that holds a token of the Forgejo instance, with the scopes
+/// `read:user` and `write:repository`.
+pub const FORGEJO_TOKEN: &str = "STEMMA_FORGEJO_TOKEN";
+
+struct Forgejo {
+    /// The instance, from `[forge] url`.
+    url: Option<String>,
+}
+
+/// The status checks the protection of `main` requires: Forgejo names them
+/// `<workflow> / <job> (<event>)`.
+fn forgejo_checks() -> Vec<String> {
+    REQUIRED_CHECKS
+        .iter()
+        .map(|c| format!("Stemma / {c} *"))
+        .collect()
+}
+
+/// The protection of `main`: no pushes, so changes come through pull
+/// requests, which pass the checks. Forgejo refuses forced pushes and
+/// deletion of a protected branch by itself.
+fn branch_protection() -> serde_json::Value {
+    json!({
+        "enable_push": false,
+        "enable_status_check": true,
+        "status_check_contexts": forgejo_checks(),
+        "required_approvals": 0,
+        // A branch need not be up to date with `main`.
+        "block_on_outdated_branch": false,
+    })
+}
+
+/// The settings of the repository: merge commits only, and Actions on.
+fn repository_settings() -> serde_json::Value {
+    json!({
+        "has_actions": true,
+        "has_pull_requests": true,
+        "allow_merge_commits": true,
+        "allow_squash_merge": false,
+        "allow_rebase": false,
+        "allow_rebase_explicit": false,
+        "allow_fast_forward_only_merge": false,
+        "default_merge_style": "merge",
+    })
+}
+
+/// A pull request as Forgejo's API gives it.
+#[derive(Deserialize)]
+struct ForgejoPullRequest {
+    number: u64,
+    html_url: String,
+    state: String,
+    title: String,
+    #[serde(default)]
+    merged: bool,
+    head: ForgejoBranch,
+    base: ForgejoBranch,
+}
+
+#[derive(Deserialize)]
+struct ForgejoBranch {
+    #[serde(rename = "ref")]
+    name: String,
+    repo: Option<ForgejoRepository>,
+}
+
+#[derive(Deserialize)]
+struct ForgejoRepository {
+    full_name: String,
+}
+
+impl ForgejoPullRequest {
+    /// Whether it comes from a branch of `repo` itself, not from a fork.
+    fn is_from(&self, repo: &str) -> bool {
+        self.head
+            .repo
+            .as_ref()
+            .is_some_and(|r| r.full_name.eq_ignore_ascii_case(repo))
+    }
+
+    fn into_pull_request(self) -> PullRequest {
+        PullRequest {
+            number: self.number,
+            url: self.html_url,
+            head: self.head.name,
+            base: self.base.name,
+            state: match (self.merged, self.state.as_str()) {
+                (true, _) => State::Merged,
+                (false, "open") => State::Open,
+                _ => State::Closed,
+            },
+            title: self.title,
+        }
+    }
+}
+
+/// Base64, for HTTP's basic authentication.
+fn base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::new();
+    for chunk in bytes.chunks(3) {
+        let n = chunk
+            .iter()
+            .enumerate()
+            .fold(0u32, |n, (i, b)| n | (u32::from(*b) << (16 - 8 * i)));
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(ALPHABET[(n >> (18 - 6 * i) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
+impl Forgejo {
+    /// The instance's address, without a trailing slash.
+    fn base(&self) -> Result<&str> {
+        self.url
+            .as_deref()
+            .map(|u| u.trim().trim_end_matches('/'))
+            .filter(|u| !u.is_empty())
+            .ok_or_else(|| {
+                anyhow!("stemma.toml names no Forgejo instance: `[forge] url` is missing")
+            })
+    }
+
+    /// The `Authorization` header: the token of `STEMMA_FORGEJO_TOKEN`, or
+    /// the credentials git keeps for the instance, without asking for them.
+    fn authorization(&self) -> Option<String> {
+        if let Ok(token) = std::env::var(FORGEJO_TOKEN)
+            && !token.trim().is_empty()
+        {
+            return Some(format!("token {}", token.trim()));
+        }
+        let (protocol, rest) = self.base().ok()?.split_once("://")?;
+        let host = rest.split('/').next()?;
+        let mut child = Command::new("git")
+            .args(["credential", "fill"])
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("GIT_ASKPASS", "")
+            .env("SSH_ASKPASS", "")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .ok()?;
+        {
+            use std::io::Write;
+            let mut stdin = child.stdin.take()?;
+            write!(stdin, "protocol={protocol}\nhost={host}\n\n").ok()?;
+        }
+        let out = child.wait_with_output().ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let text = String::from_utf8_lossy(&out.stdout);
+        let field = |key: &str| {
+            text.lines()
+                .find_map(|l| l.strip_prefix(&format!("{key}=")))
+                .map(str::to_string)
+        };
+        let (user, password) = (field("username")?, field("password")?);
+        Some(format!(
+            "Basic {}",
+            base64(format!("{user}:{password}").as_bytes())
+        ))
+    }
+
+    /// Calls the API: `GET` without a body, `POST` or `PATCH` with one. It
+    /// gives the status and the answer, whatever the status.
+    fn call(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<&serde_json::Value>,
+    ) -> Result<(u16, serde_json::Value)> {
+        let base = self.base()?;
+        let url = format!("{base}/api/v1{path}");
+        let tls = ureq::tls::TlsConfig::builder()
+            .root_certs(ureq::tls::RootCerts::PlatformVerifier)
+            .build();
+        let agent: ureq::Agent = ureq::Agent::config_builder()
+            .http_status_as_error(false)
+            .timeout_global(Some(std::time::Duration::from_secs(30)))
+            .tls_config(tls)
+            .build()
+            .into();
+        let authorization = self.authorization();
+        fn headers<B>(
+            request: ureq::RequestBuilder<B>,
+            authorization: Option<&str>,
+        ) -> ureq::RequestBuilder<B> {
+            let request = request.header("Accept", "application/json");
+            match authorization {
+                Some(a) => request.header("Authorization", a),
+                None => request,
+            }
+        }
+        let auth = authorization.as_deref();
+        let response = match (method, body) {
+            ("GET", None) => headers(agent.get(&url), auth).call(),
+            ("POST" | "PATCH", Some(body)) => {
+                let request = if method == "POST" {
+                    agent.post(&url)
+                } else {
+                    agent.patch(&url)
+                };
+                headers(request, auth)
+                    .header("Content-Type", "application/json")
+                    .send(body.to_string())
+            }
+            _ => bail!("{method} {path}: not a call stemma makes"),
+        };
+        let mut response = response.with_context(|| format!("reaching {base}"))?;
+        let status = response.status().as_u16();
+        let text = response.body_mut().read_to_string().unwrap_or_default();
+        let value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+        Ok((status, value))
+    }
+
+    /// Calls the API, failing unless the status is a success.
+    fn ok(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<&serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        let (status, value) = self.call(method, path, body)?;
+        if (200..300).contains(&status) {
+            return Ok(value);
+        }
+        let message = value
+            .get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("no explanation");
+        let hint = if matches!(status, 401 | 403) && self.authorization().is_none() {
+            format!(
+                "; set {FORGEJO_TOKEN} to a token of {} with the scopes read:user and \
+                 write:repository",
+                self.base().unwrap_or_default()
+            )
+        } else {
+            String::new()
+        };
+        bail!("Forgejo answered {status} to {method} {path}: {message}{hint}")
+    }
+
+    /// The group's repository: the one `origin` points at, as `owner/name`.
+    fn repository(&self, dir: &Path) -> Result<String> {
+        let url = origin(dir)?;
+        remote_parts(&url)
+            .map(|(_, slug)| slug)
+            .ok_or_else(|| anyhow!("`origin` ({url}) is not the URL of a repository"))
+    }
+}
+
+impl Forge for Forgejo {
+    fn kind(&self) -> ForgeKind {
+        ForgeKind::Forgejo
+    }
+
+    fn login(&self) -> Option<String> {
+        self.authorization()?;
+        self.ok("GET", "/user", None)
+            .ok()?
+            .get("login")?
+            .as_str()
+            .filter(|l| !l.is_empty())
+            .map(str::to_string)
+    }
+
+    fn pull_requests(&self, dir: &Path, heads: &[&str]) -> Result<Vec<PullRequest>> {
+        let repo = self.repository(dir)?;
+        let mut all = Vec::new();
+        // The 200 updated most recently, as for GitHub.
+        for page in 1..=4 {
+            let value = self.ok(
+                "GET",
+                &format!("/repos/{repo}/pulls?state=all&sort=recentupdate&limit=50&page={page}"),
+                None,
+            )?;
+            let prs: Vec<ForgejoPullRequest> =
+                serde_json::from_value(value).context("reading the pull requests Forgejo lists")?;
+            let last = prs.len() < 50;
+            all.extend(prs);
+            if last {
+                break;
+            }
+        }
+        let mut found: Vec<PullRequest> = all
+            .into_iter()
+            .filter(|pr| pr.is_from(&repo) && heads.contains(&pr.head.name.as_str()))
+            .map(ForgejoPullRequest::into_pull_request)
+            .collect();
+        found.sort_by_key(|pr| std::cmp::Reverse(pr.number));
+        Ok(found)
+    }
+
+    fn open_pull_request(&self, dir: &Path, new: &NewPullRequest) -> Result<PullRequest> {
+        let repo = self.repository(dir)?;
+        let body = json!({
+            "head": new.head, "base": new.base, "title": new.title, "body": new.body,
+        });
+        let value = self.ok("POST", &format!("/repos/{repo}/pulls"), Some(&body))?;
+        let pr: ForgejoPullRequest =
+            serde_json::from_value(value).context("reading the pull request Forgejo opened")?;
+        Ok(pr.into_pull_request())
+    }
+
+    fn apply(&self, dir: &Path, step: Step) -> Result<()> {
+        let repo = self.repository(dir)?;
+        match step {
+            Step::Rules => {
+                let path = format!("/repos/{repo}/branch_protections/main");
+                let (status, _) = self.call("GET", &path, None)?;
+                if status == 404 {
+                    let mut body = branch_protection();
+                    body["rule_name"] = json!("main");
+                    self.ok(
+                        "POST",
+                        &format!("/repos/{repo}/branch_protections"),
+                        Some(&body),
+                    )?;
+                } else {
+                    self.ok("PATCH", &path, Some(&branch_protection()))?;
+                }
+            }
+            Step::MergeCommits => {
+                self.ok(
+                    "PATCH",
+                    &format!("/repos/{repo}"),
+                    Some(&repository_settings()),
+                )?;
+            }
+            Step::Pages => bail!("Forgejo has no Pages"),
+        }
+        Ok(())
+    }
+}
+
 // No forge.
 
 struct NoForge;
@@ -587,6 +1024,124 @@ mod tests {
         }
         assert_eq!(github_slug("/srv/git/algebra.git"), None);
         assert_eq!(github_slug("https://gitlab.com/group/algebra"), None);
+    }
+
+    #[test]
+    fn reads_remote_urls_of_any_forge() {
+        for (url, host) in [
+            ("git@codeberg.org:group/algebra.git", "codeberg.org"),
+            (
+                "ssh://git@git.uni.edu:2222/group/algebra.git",
+                "git.uni.edu",
+            ),
+            ("https://git.uni.edu/group/algebra/", "git.uni.edu"),
+            (
+                "https://user@codeberg.org/group/algebra.git",
+                "codeberg.org",
+            ),
+        ] {
+            assert_eq!(
+                remote_parts(url),
+                Some((host.to_string(), "group/algebra".to_string())),
+                "{url}"
+            );
+        }
+        assert_eq!(remote_parts("/srv/git/algebra.git"), None);
+        assert_eq!(remote_parts("https://codeberg.org/algebra"), None);
+    }
+
+    #[test]
+    fn forgejo_protects_main_and_merges_with_merge_commits() {
+        let protection = branch_protection();
+        assert_eq!(protection["enable_push"], false);
+        assert_eq!(
+            protection["status_check_contexts"],
+            json!(["Stemma / Stemma verify *", "Stemma / Stemma check *"])
+        );
+        let settings = repository_settings();
+        assert_eq!(settings["allow_merge_commits"], true);
+        assert_eq!(settings["allow_squash_merge"], false);
+        assert_eq!(settings["default_merge_style"], "merge");
+    }
+
+    #[test]
+    fn reads_forgejo_pull_requests() {
+        let pr = |merged: bool, state: &str, owner: &str| {
+            serde_json::from_value::<ForgejoPullRequest>(json!({
+                "number": 7, "html_url": "https://codeberg.org/g/a/pulls/7", "state": state,
+                "title": "T", "merged": merged,
+                "head": { "ref": "share/alice", "repo": { "full_name": format!("{owner}/a") } },
+                "base": { "ref": "main", "repo": { "full_name": "g/a" } },
+            }))
+            .unwrap()
+        };
+        assert!(pr(false, "open", "G").is_from("g/a"));
+        assert!(!pr(false, "open", "fork").is_from("g/a"));
+        let open = pr(false, "open", "g").into_pull_request();
+        assert_eq!(
+            (open.state, open.head.as_str()),
+            (State::Open, "share/alice")
+        );
+        assert_eq!(
+            pr(true, "closed", "g").into_pull_request().state,
+            State::Merged
+        );
+        assert_eq!(
+            pr(false, "closed", "g").into_pull_request().state,
+            State::Closed
+        );
+    }
+
+    /// Against Codeberg, which runs Forgejo: `cargo test -- --ignored`.
+    #[test]
+    #[ignore = "reaches codeberg.org"]
+    fn lists_pull_requests_on_codeberg() {
+        let dir = std::env::temp_dir().join(format!("stemma-codeberg-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for args in [
+            &["init", "--quiet"][..],
+            &[
+                "remote",
+                "add",
+                "origin",
+                "https://codeberg.org/forgejo/forgejo.git",
+            ],
+        ] {
+            assert!(
+                Command::new("git")
+                    .args(args)
+                    .current_dir(&dir)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
+        let forge = Forgejo {
+            url: Some("https://codeberg.org/".into()),
+        };
+        let all = forge.pull_requests(&dir, &[]).unwrap();
+        assert!(all.is_empty());
+        let (status, value) = forge
+            .call(
+                "GET",
+                "/repos/forgejo/forgejo/pulls?state=all&limit=1",
+                None,
+            )
+            .unwrap();
+        assert_eq!(status, 200, "{value}");
+        let prs: Vec<ForgejoPullRequest> = serde_json::from_value(value).unwrap();
+        let pr = prs.into_iter().next().unwrap();
+        assert!(pr.is_from("forgejo/forgejo") || pr.head.repo.is_some());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn encodes_base64() {
+        assert_eq!(base64(b"user:pass"), "dXNlcjpwYXNz");
+        assert_eq!(base64(b"a"), "YQ==");
+        assert_eq!(base64(b"ab"), "YWI=");
+        assert_eq!(base64(b""), "");
     }
 
     #[test]

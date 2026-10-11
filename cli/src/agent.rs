@@ -69,6 +69,7 @@ pub const PROTECTED: &[&str] = &[
     "lean-toolchain",
     ".gitignore",
     ".github/**",
+    ".forgejo/**",
     "signatures/**",
 ];
 
@@ -255,10 +256,16 @@ pub fn this_stemma() -> String {
     format!("'{}'", path.replace('\'', r"'\''"))
 }
 
-/// The person's handle: their account on the forge when it is known,
-/// otherwise their git name, simplified.
+/// The person's handle: their account on the library's forge when it is
+/// known, otherwise their git name, simplified.
 pub fn person() -> String {
-    if let Some(login) = crate::forge::current().login() {
+    person_on(crate::forge::current(Path::new(".")).as_ref())
+}
+
+/// The person's handle: their account on `forge` when it is known, otherwise
+/// their git name, simplified.
+pub fn person_on(forge: &dyn crate::forge::Forge) -> String {
+    if let Some(login) = forge.login() {
         return login;
     }
     let name = Command::new("git")
@@ -573,6 +580,13 @@ mod tests {
             "git log main",
         ] {
             assert_eq!(forbidden_command(line), None, "{line}");
+        }
+    }
+
+    #[test]
+    fn every_forges_configuration_is_protected() {
+        for dir in crate::forge::FORGE_DIRS {
+            assert!(PROTECTED.contains(&format!("{dir}/**").as_str()), "{dir}");
         }
     }
 

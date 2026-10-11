@@ -14,9 +14,12 @@ use serde_json::json;
 use toml_edit::{Array, DocumentMut, Item, value};
 
 use crate::commands::{LEAN_TOOLCHAIN, REFERENCES, STEMMA_GIT, mathlib_rev};
-use crate::config::Config;
+use crate::config::{Config, ForgeKind};
 use crate::library::Library;
 use crate::{agents_md, templates, ui};
+
+/// How the workflows `stemma` writes begin.
+const WRITTEN_BY_STEMMA: &str = "# Written by `stemma`";
 
 /// Each person's copies of material, which git ignores.
 const SOURCES: &str = "sources";
@@ -251,12 +254,15 @@ struct Plan {
     writes: Vec<(String, String)>,
     /// Files `git` tracks in `sources/`, and where they move.
     moves: Vec<(String, String)>,
+    /// The workflows `stemma` wrote for another forge than the library's,
+    /// and whether git tracks them.
+    removes: Vec<(String, bool)>,
 }
 
 impl Plan {
     /// Whether the upgrade changes nothing.
     fn is_empty(&self) -> bool {
-        self.changed.is_empty() && self.moves.is_empty()
+        self.changed.is_empty() && self.moves.is_empty() && self.removes.is_empty()
     }
 }
 
@@ -309,7 +315,12 @@ fn plan(library: &Library) -> Result<Plan> {
         .find(|r| r.name == "stemma")
         .and_then(|r| r.path.clone());
     let mathlib = lakefile.require.iter().any(|r| r.name == "mathlib");
-    let publish = Config::parse(&files.config.to_string()).is_ok_and(|c| c.site.publish);
+    let upgraded = Config::parse(&files.config.to_string()).ok();
+    let forge = upgraded.as_ref().map(|c| &c.forge);
+    let kind = forge.map(|f| f.kind).unwrap_or_default();
+    let publish = upgraded
+        .as_ref()
+        .is_some_and(|c| c.site.publish && kind == ForgeKind::GitHub);
     let context = json!({
         "name": config.name,
         "title": config.title,
@@ -320,6 +331,9 @@ fn plan(library: &Library) -> Result<Plan> {
         "mathlib": mathlib,
         "mathlib_rev": mathlib_rev(),
         "publish": publish,
+        "forgejo": kind == ForgeKind::Forgejo,
+        "forge_url": forge.and_then(|f| f.url.clone()),
+        "runner": forge.map_or(crate::config::FORGEJO_RUNNER, |f| f.runner()),
     });
     let agents = agents_md::updated(files.agents.as_deref().unwrap_or_default())
         .or(files.agents.clone())
@@ -332,8 +346,8 @@ fn plan(library: &Library) -> Result<Plan> {
         ),
         ("lean-toolchain".to_string(), LEAN_TOOLCHAIN.to_string()),
         (
-            ".github/workflows/stemma.yml".to_string(),
-            templates::render("library/github/stemma.yml", &context)?,
+            crate::forge::workflow(kind).to_string(),
+            templates::render(crate::forge::workflow_template(kind), &context)?,
         ),
         ("AGENTS.md".to_string(), agents),
     ];
@@ -368,6 +382,20 @@ fn plan(library: &Library) -> Result<Plan> {
         }
         moves.push((file.to_string(), to));
     }
+    // The workflow of the other forge, when `stemma` wrote it: the library
+    // moved from it.
+    let mut removes = Vec::new();
+    for other in [ForgeKind::GitHub, ForgeKind::Forgejo] {
+        let file = crate::forge::workflow(other);
+        if other != kind && read(file).is_some_and(|t| t.starts_with(WRITTEN_BY_STEMMA)) {
+            let tracked = Command::new("git")
+                .args(["ls-files", "--error-unmatch", "--", file])
+                .current_dir(dir)
+                .output()
+                .is_ok_and(|o| o.status.success());
+            removes.push((file.to_string(), tracked));
+        }
+    }
     let changed = writes
         .iter()
         .filter(|(file, text)| read(file).as_deref() != Some(text.as_str()))
@@ -379,6 +407,7 @@ fn plan(library: &Library) -> Result<Plan> {
         changed,
         writes,
         moves,
+        removes,
     })
 }
 
@@ -397,7 +426,11 @@ fn git(dir: &Path, args: &[&str]) -> Result<()> {
 /// Sets the group's repository up on the forge, when the library has one: a
 /// step of its own, which is not a change of files, and whose failures only
 /// say what to set by hand.
-fn set_up_forge(dir: &Path, json_output: bool) -> Option<Vec<crate::forge::Outcome>> {
+fn set_up_forge(
+    host: &dyn crate::forge::Forge,
+    dir: &Path,
+    json_output: bool,
+) -> Option<Vec<crate::forge::Outcome>> {
     let has_origin = Command::new("git")
         .args(["remote", "get-url", "origin"])
         .current_dir(dir)
@@ -407,7 +440,7 @@ fn set_up_forge(dir: &Path, json_output: bool) -> Option<Vec<crate::forge::Outco
         return None;
     }
     let spinner = ui::Spinner::start("Setting the repository up", json_output);
-    let outcomes = crate::forge::set_up(crate::forge::current().as_ref(), dir);
+    let outcomes = crate::forge::set_up(host, dir);
     spinner.stop();
     Some(outcomes)
 }
@@ -483,6 +516,7 @@ pub fn upgrade(options: Options, json_output: bool) -> Result<bool> {
                 .iter()
                 .map(|(f, t)| format!("- Move {f} to {t}.")),
         );
+        lines.extend(plan.removes.iter().map(|(f, _)| format!("- Remove {f}.")));
         if update {
             lines.push("- Update the dependencies (`lake update`).".into());
         }
@@ -509,6 +543,13 @@ pub fn upgrade(options: Options, json_output: bool) -> Result<bool> {
                 std::fs::create_dir_all(parent)?;
             }
             git(dir, &["mv", "--", from, to])?;
+        }
+        for (file, tracked) in &plan.removes {
+            if *tracked {
+                git(dir, &["rm", "--quiet", "--", file])?;
+            } else {
+                std::fs::remove_file(library.dir.join(file))?;
+            }
         }
         for (file, text) in &plan.writes {
             let path = library.dir.join(file);
@@ -541,11 +582,17 @@ pub fn upgrade(options: Options, json_output: bool) -> Result<bool> {
         if !files.is_empty() {
             git(dir, &add)?;
         }
-        // The moves are staged already, by `git mv`.
+        // The moves and removals are staged already, by `git mv` and `git rm`.
         files.extend(
             plan.moves
                 .iter()
                 .flat_map(|(f, t)| [f.as_str(), t.as_str()]),
+        );
+        files.extend(
+            plan.removes
+                .iter()
+                .filter(|(_, tracked)| *tracked)
+                .map(|(f, _)| f.as_str()),
         );
         let message = format!("Upgrade to stemma {to}");
         let mut commit_args = vec!["commit", "--quiet", "-m", &message, "--"];
@@ -555,8 +602,10 @@ pub fn upgrade(options: Options, json_output: bool) -> Result<bool> {
     } else {
         false
     };
+    // The forge the library names, as upgraded.
+    let host = crate::forge::current(dir);
     let forge = if !dry_run && forge {
-        set_up_forge(dir, json_output)
+        set_up_forge(host.as_ref(), dir, json_output)
     } else {
         None
     };
@@ -566,6 +615,7 @@ pub fn upgrade(options: Options, json_output: bool) -> Result<bool> {
             "from": plan.from, "to": to, "dry_run": dry_run,
             "migrations": plan.migrations, "changed": plan.changed,
             "moved": plan.moves.iter().map(|(f, t)| json!({"from": f, "to": t})).collect::<Vec<_>>(),
+            "removed": plan.removes.iter().map(|(f, _)| f).collect::<Vec<_>>(),
             "updated": updated,
             "branch": branch, "committed": committed, "forge": forge, "next": next,
         });
@@ -574,7 +624,7 @@ pub fn upgrade(options: Options, json_output: bool) -> Result<bool> {
     }
     let report_forge = |outcomes: &Option<Vec<crate::forge::Outcome>>| {
         if let Some(outcomes) = outcomes {
-            crate::forge::report(outcomes, |ok, text| {
+            crate::forge::report(host.as_ref(), outcomes, |ok, text| {
                 say(
                     interactive,
                     if ok { Line::Success } else { Line::Warning },
@@ -613,6 +663,10 @@ pub fn upgrade(options: Options, json_output: bool) -> Result<bool> {
         let moved = if dry_run { "Would move" } else { "Moved" };
         for (f, t) in &plan.moves {
             ui::note(format!("{moved} {f} to {t}."));
+        }
+        let removed = if dry_run { "Would remove" } else { "Removed" };
+        for (f, _) in &plan.removes {
+            ui::note(format!("{removed} {f}."));
         }
     }
     report_forge(&forge);

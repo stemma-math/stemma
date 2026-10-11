@@ -17,12 +17,49 @@ pub struct Config {
     pub policy: Policy,
     #[serde(default)]
     pub site: Site,
+    #[serde(default)]
+    pub forge: Forge,
+}
+
+/// The `[forge]` table: the forge that hosts the group's repository.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Forge {
+    #[serde(default)]
+    pub kind: ForgeKind,
+    /// The address of the instance, for Forgejo: `https://codeberg.org`.
+    pub url: Option<String>,
+    /// The label of the runners the workflow runs on, for Forgejo.
+    pub runner: Option<String>,
+}
+
+/// The kinds of forge `stemma` knows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "lowercase")]
+pub enum ForgeKind {
+    /// GitHub, through its command line, `gh`.
+    #[default]
+    #[value(name = "github")]
+    GitHub,
+    /// Forgejo, such as Codeberg or a group's own instance, through its API.
+    Forgejo,
+}
+
+/// The runner label a Forgejo workflow runs on, unless the library says.
+pub const FORGEJO_RUNNER: &str = "docker";
+
+impl Forge {
+    /// The label of the runners the workflow runs on, for Forgejo.
+    pub fn runner(&self) -> &str {
+        self.runner.as_deref().unwrap_or(FORGEJO_RUNNER)
+    }
 }
 
 /// The `[site]` table.
 #[derive(Debug, Default, Deserialize)]
 pub struct Site {
-    /// Whether the workflow publishes the site to GitHub Pages from `main`.
+    /// Whether the workflow publishes the site to GitHub Pages from `main`
+    /// (only on GitHub).
     #[serde(default)]
     pub publish: bool,
 }
