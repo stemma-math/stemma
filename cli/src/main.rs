@@ -87,6 +87,10 @@ enum Commands {
         /// Another member, by forge account (repeatable). You are always one.
         #[arg(long = "member")]
         members: Vec<String>,
+        /// Set scratch/ up with a main file for the group and one for each
+        /// member, in this format. By default, in a terminal, it asks.
+        #[arg(long, value_enum)]
+        scratch: Option<init::Scratch>,
         /// Ask nothing: take every default.
         #[arg(long, short)]
         yes: bool,
@@ -344,6 +348,7 @@ fn main() -> ExitCode {
             push,
             no_forge,
             members,
+            scratch,
             yes,
         } => init::init(
             init::Options {
@@ -360,6 +365,7 @@ fn main() -> ExitCode {
                 push: push.then_some(true),
                 forge: no_forge.then_some(false),
                 members,
+                scratch,
                 yes,
             },
             cli.json,

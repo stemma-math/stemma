@@ -208,8 +208,9 @@ fn upgrade_moves_an_old_library_to_this_version() {
     );
     let plan: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(plan["from"], "0.1.0");
-    // From 0.1.0: two migrations of 0.2.0, one of 0.3.0 and two of 0.4.0.
-    assert_eq!(plan["migrations"].as_array().unwrap().len(), 5);
+    // From 0.1.0: two migrations of 0.2.0, one of 0.3.0, two of 0.4.0 and one
+    // of 0.5.0.
+    assert_eq!(plan["migrations"].as_array().unwrap().len(), 6);
     assert!(read(dir.join("stemma.toml")).contains("self_merge"));
 
     // Without a terminal, it asks nothing, and says what follows: a
@@ -2072,6 +2073,112 @@ fn check_and_status_leave_scratch_and_sources_alone() {
     assert_eq!(check["ok"], true, "{check}");
     let status = json_of(&stemma_built(&dir, &bin, &report, &["status", "--json"]));
     assert!(status.get("sources").is_none(), "{status}");
+}
+
+#[test]
+fn init_sets_scratch_up_only_when_asked() {
+    let dir = scratch("init-scratch");
+    let out = stemma(
+        &dir,
+        &[
+            "init",
+            ".",
+            "--name",
+            "Alg",
+            "--title",
+            "Algebra",
+            "--no-mathlib",
+            "--member",
+            "bob",
+            "--scratch",
+            "typ",
+        ],
+    );
+    assert!(out.status.success(), "{}", stderr(&out));
+    // A main file for the group, and one for each member: bob, and the
+    // person creating the library.
+    let mut owners: Vec<_> = std::fs::read_dir(dir.join("scratch"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    owners.sort();
+    assert_eq!(owners.len(), 3, "{owners:?}");
+    assert!(owners.contains(&"share".into()) && owners.contains(&"bob".into()));
+    for owner in &owners {
+        let main = read(dir.join(format!("scratch/{owner}/main.typ")));
+        assert!(
+            main.starts_with("#set document(title: \"Algebra: "),
+            "{main}"
+        );
+    }
+    assert!(!dir.join("scratch/README.md").exists());
+    // The build output of LaTeX and Typst is ignored.
+    std::fs::write(dir.join("scratch/bob/main.pdf"), "").unwrap();
+    std::fs::write(dir.join("scratch/bob/main.aux"), "").unwrap();
+    let untracked = git(&dir, &["status", "--porcelain", "--untracked-files=all"]);
+    assert!(untracked.contains("scratch/bob/main.typ"), "{untracked}");
+    assert!(!untracked.contains("main.pdf"), "{untracked}");
+    assert!(!untracked.contains("main.aux"), "{untracked}");
+
+    // Without the flag and without a terminal, there is no layout.
+    let dir = scratch("init-no-scratch");
+    let out = stemma(&dir, &["init", ".", "--name", "Alg", "--no-mathlib"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(!dir.join("scratch").exists());
+}
+
+#[test]
+fn upgrade_moves_what_sources_kept_to_scratch_and_keeps_the_groups_ignores() {
+    let dir = scratch("upgrade-sources");
+    let out = stemma(
+        &dir,
+        &["init", ".", "--name", "Alg", "--no-mathlib", "--commit"],
+    );
+    assert!(out.status.success(), "{}", stderr(&out));
+    // A library of 0.4.0, with a source plan and its own ignores.
+    let config = read(dir.join("stemma.toml")).replace(
+        &format!("stemma = \"{}\"", env!("CARGO_PKG_VERSION")),
+        "stemma = \"0.4.0\"",
+    );
+    std::fs::write(dir.join("stemma.toml"), config).unwrap();
+    std::fs::write(
+        dir.join(".gitignore"),
+        "/.lake/\n/.stemma/\n\n# Ours.\n*.bak\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("sources/book")).unwrap();
+    std::fs::write(dir.join("sources/book/ch1.toml"), "title = \"1\"\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "--quiet", "-m", "A library of 0.4.0"]);
+
+    let out = stemma(&dir, &["upgrade", "--no-update", "--json"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let result: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        result["moved"][0]["from"], "sources/book/ch1.toml",
+        "{result}"
+    );
+    assert_eq!(result["moved"][0]["to"], "scratch/share/book/ch1.toml");
+    assert_eq!(result["committed"], true);
+    assert_eq!(git(&dir, &["status", "--porcelain"]), "");
+    assert_eq!(
+        read(dir.join("scratch/share/book/ch1.toml")),
+        "title = \"1\"\n"
+    );
+    assert!(!dir.join("sources/book/ch1.toml").exists());
+    let ignore = read(dir.join(".gitignore"));
+    assert!(
+        ignore.starts_with("/.lake/\n/.stemma/\n\n# Ours.\n*.bak\n"),
+        "{ignore}"
+    );
+    assert!(ignore.contains("\n/sources/\n"), "{ignore}");
+    assert!(ignore.contains("\n*.synctex.gz\n"), "{ignore}");
+
+    // Upgrading again changes nothing.
+    let out = stemma(&dir, &["upgrade", "--no-update", "--json"]);
+    let again: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(again["changed"].as_array().unwrap().is_empty(), "{again}");
+    assert!(again["moved"].as_array().unwrap().is_empty(), "{again}");
 }
 
 /// The jobs of a workflow, by name, and their text.
