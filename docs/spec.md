@@ -31,7 +31,7 @@ library's Lean name, for example `Algebra`.
 │   └── <reading>/
 ├── scratch/               # the group's working material: notes, drafts
 ├── sources/               # each person's copies of material (not in git)
-├── .github/               # the forge's checks and rules (GitHub)
+├── .github/ or .forgejo/  # the forge's checks (GitHub or Forgejo)
 ├── AGENTS.md              # the group's instructions for agents
 ├── README.md
 └── .gitignore
@@ -51,7 +51,7 @@ Who writes each entry:
 | `scratch/` | people, and agents |
 | `sources/` | each person, for themselves |
 | `AGENTS.md` | the group, except a block at its top that `stemma` writes |
-| `.github/`, `.gitignore` | `stemma` only |
+| `.github/`, `.forgejo/`, `.gitignore` | `stemma` only |
 
 ### Organization is free; every module reads on its own
 
@@ -192,6 +192,11 @@ require_signed_central = true   # every central environment is signed (§3)
 
 [site]
 publish = false             # whether the site is published from main (§4, "Forges")
+
+[forge]
+kind = "forgejo"            # "github" (when there is no [forge]) or "forgejo"
+url = "https://codeberg.org"  # Forgejo: the instance
+runner = "docker"           # Forgejo: the label of the runners the workflow runs on
 ```
 
 - A member is who signs with one of their **keys**: the SSH public keys listed
@@ -208,7 +213,9 @@ publish = false             # whether the site is published from main (§4, "For
 - `[site] publish` says whether the forge publishes the library's site from
   `main` (§4, "Forges"). It is off unless the group turns it on: `stemma init`
   asks, and `stemma upgrade` writes it, off, in libraries made before it
-  existed.
+  existed. Only GitHub publishes it.
+- `[forge]` names the forge that hosts the group's repository (§4,
+  "Forges"). `stemma init` asks for it; a library without it is on GitHub.
 
 ### Not committed
 
@@ -731,7 +738,7 @@ decides which, in `stemma.toml`:
 ```toml
 [policy.review]
 dependencies = ["maintainer"]   # lakefile.toml, lake-manifest.json, lean-toolchain
-policy       = ["maintainer"]   # stemma.toml, .github/
+policy       = ["maintainer"]   # stemma.toml, .github/, .forgejo/
 ```
 
 - `policy.review` names kinds of change and the roles whose approval they
@@ -768,16 +775,24 @@ policy       = ["maintainer"]   # stemma.toml, .github/
 
 ### Forges
 
-The first forge Stemma supports is GitHub:
+Stemma supports two forges, which the library names in `[forge]` (§1,
+"Configuration"): GitHub, and Forgejo, on any instance (Codeberg, or one a
+group hosts):
 
-| Piece | On GitHub |
-|---|---|
-| `main` changes only through pull requests | A ruleset on `main`: pull requests required, no direct or forced pushes, no deletion |
-| Merge commits only | The repository allows merge commits, and neither squash nor rebase merging |
-| Required checks | A GitHub Actions workflow written by `stemma` (`.github/workflows/stemma.yml`) with two jobs, both required by the ruleset (without requiring branches to be up to date, which would make the forge commit on share branches): `Stemma verify`, which runs `stemma verify --no-build` and needs only the history and `stemma`, so that a signature problem is reported within a minute; and `Stemma check`, which runs `stemma check` |
-| Signatures and approvals | Signed commits, checked by `stemma verify` with git against the members' keys: GitHub's reviews play no part |
-| The library's site | Pull requests carry the built site (`stemma preview --no-serve`) as a downloadable artifact, and nothing is deployed from them. When `[site] publish` is on, the same workflow builds the site on every push to `main` and publishes it to GitHub Pages |
+| Piece | On GitHub | On Forgejo |
+|---|---|---|
+| How `stemma` reaches it | Its command line, `gh` | Its API, at `[forge] url`, with the token in `STEMMA_FORGEJO_TOKEN` or the credentials git keeps for the instance |
+| `main` changes only through pull requests | A ruleset on `main`: pull requests required, no direct or forced pushes, no deletion | A protection rule on `main`: no pushes; Forgejo refuses forced pushes and deletion of a protected branch |
+| Merge commits only | The repository allows merge commits, and neither squash nor rebase merging | The same, and Actions are on |
+| Required checks | A GitHub Actions workflow, `.github/workflows/stemma.yml` | A Forgejo Actions workflow, `.forgejo/workflows/stemma.yml`, on the runners labelled `[forge] runner`, required by the patterns `Stemma / Stemma verify *` and `Stemma / Stemma check *` |
+| Signatures and approvals | Signed commits, checked by `stemma verify` with git against the members' keys: the forge's reviews play no part | The same |
+| The library's site | Pull requests carry the built site (`stemma preview --no-serve`) as a downloadable artifact, and nothing is deployed from them. When `[site] publish` is on, the same workflow builds the site on every push to `main` and publishes it to GitHub Pages | Pull requests carry it as an artifact; it is not published |
 
+- The workflow has two jobs, both required, without requiring branches to be
+  up to date, which would make the forge commit on share branches: `Stemma
+  verify`, which runs `stemma verify --no-build` and needs only the history
+  and `stemma`, so that a signature problem is reported within a minute; and
+  `Stemma check`, which runs `stemma check`.
 - The checks run without secrets: `stemma verify` reads only the repository,
   so it gives the same answer on GitHub, on any other forge, and on a
   person's machine.
@@ -791,9 +806,11 @@ The first forge Stemma supports is GitHub:
 - `stemma` sets the repository up (rules, required checks, merge commits only,
   workflow, and Pages when the site is published) when it creates the
   library, and `stemma upgrade` applies the same setup to existing libraries.
-  When the forge's command line is missing or lacks permission (or, for
-  Pages, the plan does not allow it), it says exactly what to set by hand, and
-  the rest goes on.
+  When the forge cannot be reached or refuses (no `gh`, no token, no
+  permission, or, for Pages, a plan that does not allow it), it says exactly
+  what to set by hand, and the rest goes on.
+- When a library moves to another forge, `stemma upgrade` writes that forge's
+  workflow and removes the one it had written for the other.
 - Everything `stemma` asks of a forge (who the person is, finding and opening
   pull requests, setting the repository up) goes through one part of it, so
   that other forges can be supported.
@@ -883,7 +900,7 @@ The first forge Stemma supports is GitHub:
 
 | Command | What it does |
 |---|---|
-| `stemma init` | Creates a library: layout, `stemma.toml`, dependencies, git and its remote, and, when asked, the recommended layout of `scratch/` (`--scratch md`, `tex` or `typ`); in a terminal it asks what it needs |
+| `stemma init` | Creates a library: layout, `stemma.toml`, its forge (`--forge github` or `forgejo`, with `--forge-url`), dependencies, git and its remote, and, when asked, the recommended layout of `scratch/` (`--scratch md`, `tex` or `typ`); in a terminal it asks what it needs |
 | `stemma new` | Creates a module (document or Lean) and adds it to the table of contents |
 | `stemma check` | Runs every check of this specification |
 | `stemma status` | Shows states: not formalized, pending, signatures, distance from `main` |

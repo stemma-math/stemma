@@ -27,6 +27,6 @@ can be equipped by hand:
    (to `1`), so that `stemma sign` and `stemma key` refuse to run in it.
 
 Agents never sign, never edit `stemma.toml`, `lakefile.toml`,
-`lake-manifest.json`, `lean-toolchain`, `.gitignore`, `.github/` or
-`signatures/`, and never push to `main`. Configure the harness to deny those
+`lake-manifest.json`, `lean-toolchain`, `.gitignore`, `.github/`, `.forgejo/`
+or `signatures/`, and never push to `main`. Configure the harness to deny those
 edits and `stemma sign`, `stemma key` and forced pushes where it can.

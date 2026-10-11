@@ -33,8 +33,8 @@ signer's) act. Say which ones, and keep working.
 ## Approvals
 
 Some changes need a member's approval before they reach `main`: always a
-change of the policy (`stemma.toml`, `.github/`, including a new version of
-`stemma`), and whatever the group lists in `[policy.review]`. An approval is a
+change of the policy (`stemma.toml`, `.github/`, `.forgejo/`, including a new
+version of `stemma`), and whatever the group lists in `[policy.review]`. An approval is a
 commit signed with the member's key, made by `stemma sign` together with
 signatures; a later change of content withdraws it. `stemma verify --json`
 lists what a change lacks.
