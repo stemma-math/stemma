@@ -2334,8 +2334,10 @@ fn the_workflow_has_two_required_jobs_and_publishes_the_site_only_when_asked() {
         assert!(check.contains("run: stemma check"));
         // Pull requests restore main's caches; only main saves them.
         assert!(check.contains("actions/cache/restore@"));
-        assert!(check.contains("path: .lake/packages"));
-        assert!(check.contains("path: .lake/build"));
+        assert!(check.contains("path: ${{ env.STEMMA_CACHE_DEPENDENCIES }}"));
+        assert!(check.contains("path: ${{ env.STEMMA_CACHE_BUILD }}"));
+        // Mathlib's build, which `lake exe cache get` downloads, is left out.
+        assert!(check.contains("!.lake/packages/mathlib/.lake\n"));
         assert!(check.contains("lake build @stemma/Stemma @stemma/stemma-extract"));
         let saves: Vec<&str> = check
             .split("\n      - ")

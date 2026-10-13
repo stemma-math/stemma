@@ -2,11 +2,13 @@
 //! card with its name, label and state, its prose, its Lean statement, where
 //! it is, and a link to its read-back when there is one.
 //!
-//! Cards are drawn inside cliclack's frame, on standard error, with the
-//! terminal's own colors (so they read in dark and light themes alike), and
-//! plainly under `NO_COLOR` or when colors are not supported.
+//! Cards are drawn inside cliclack's frame, on standard error, in the roles
+//! of stemma-math/design, which take the terminal's own colours (so they
+//! read in dark and light themes alike), and plainly under its colour policy.
 
-use console::Style;
+use stemma_design_terminal::Role;
+
+use crate::ui;
 
 /// The most lines a card shows of prose and Lean together; beyond it, the
 /// card shows only where to read them.
@@ -36,29 +38,21 @@ pub struct Card<'a> {
     pub readback: Option<String>,
 }
 
-fn styled(style: Style) -> Style {
-    style.for_stderr()
-}
-
-/// Bold text, on standard error.
+/// Strong text, on standard error.
 pub fn bold(text: impl std::fmt::Display) -> String {
-    styled(Style::new().bold()).apply_to(text).to_string()
+    ui::paint(ui::err(), Role::Strong, text)
 }
 
-/// Dimmed text, on standard error.
+/// Muted text, on standard error.
 pub fn dim(text: impl std::fmt::Display) -> String {
-    styled(Style::new().dim()).apply_to(text).to_string()
+    ui::paint(ui::err(), Role::Muted, text)
 }
 
-/// The state of an item, colored as everywhere else: yellow awaits, red is
-/// stale.
+/// The state of an item, in its role as everywhere else: warning awaits,
+/// danger is stale.
 pub fn state(stale: bool, text: impl std::fmt::Display) -> String {
-    let style = if stale {
-        Style::new().red()
-    } else {
-        Style::new().yellow()
-    };
-    styled(style).apply_to(text).to_string()
+    let role = if stale { Role::Danger } else { Role::Warning };
+    ui::paint(ui::err(), role, text)
 }
 
 /// The width cards are wrapped to: the terminal's, less the frame.
@@ -156,10 +150,12 @@ impl Card<'_> {
             if !body.is_empty() {
                 body.push(String::new());
             }
-            let code = styled(Style::new().cyan());
             for line in lean.lines() {
                 // Lean is not wrapped: its layout is part of how it reads.
-                body.push(format!("{indent}{}", code.apply_to(line)));
+                body.push(format!(
+                    "{indent}{}",
+                    ui::paint(ui::err(), Role::Identifier, line)
+                ));
             }
         }
         if body.len() > MAX_LINES {

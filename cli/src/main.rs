@@ -33,7 +33,7 @@ use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 #[command(
     version,
     about = "Mathematics in Lean, written with agents",
-    styles = help::styles()
+    styles = stemma_design_terminal::themes::clap::styles()
 )]
 pub(crate) struct Cli {
     /// Print the result as JSON, for agents.
@@ -337,9 +337,17 @@ fn start(harness: agent::Harness, args: AgentArgs, json: bool) -> anyhow::Result
 }
 
 fn main() -> ExitCode {
+    ui::apply_themes();
     let command = Cli::command();
     let template = help::template(&command);
-    let matches = command.help_template(template).get_matches();
+    // Clap decides by itself whether to colour; it never does where the
+    // colour policy says not to.
+    let color = if ui::out().color() || ui::err().color() {
+        clap::ColorChoice::Auto
+    } else {
+        clap::ColorChoice::Never
+    };
+    let matches = command.help_template(template).color(color).get_matches();
     let cli = match Cli::from_arg_matches(&matches) {
         Ok(cli) => cli,
         Err(error) => error.exit(),
@@ -490,14 +498,7 @@ fn main() -> ExitCode {
         Ok(true) => ExitCode::SUCCESS,
         Ok(false) => ExitCode::FAILURE,
         Err(error) => {
-            eprintln!(
-                "{} {error:#}",
-                owo_colors::OwoColorize::if_supports_color(
-                    &"✗",
-                    owo_colors::Stream::Stderr,
-                    |t| { owo_colors::OwoColorize::red(t).to_string() }
-                )
-            );
+            ui::error_stderr(format!("{error:#}"));
             ExitCode::FAILURE
         }
     }

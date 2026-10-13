@@ -34,20 +34,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Install elan
-        run: |
-          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
-            | sh -s -- -y --default-toolchain none
-          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
-      - name: Cache Lake's packages and builds
-        uses: actions/cache@v4
-        with:
-          path: lean/.lake
-          key: lake-${{ hashFiles('lean/lean-toolchain', 'lean/lake-manifest.json') }}-${{ hashFiles('lean/**/*.lean') }}
-          restore-keys: lake-${{ hashFiles('lean/lean-toolchain', 'lean/lake-manifest.json') }}-
       - name: Build the library and its tests
-        working-directory: lean
-        run: lake build StemmaTest stemma-extract
+        uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: lean
+          auto-config: false
+          build: true
+          build-args: StemmaTest stemma-extract
+          use-mathlib-cache: false
       - name: Documents that must fail
         run: lean/tests/check-failures.sh
       - name: Extraction

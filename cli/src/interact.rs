@@ -91,7 +91,7 @@ fn answered<T>(result: std::io::Result<T>) -> Result<T> {
 
 /// Opens an interactive command: `stemma <command>`.
 pub fn intro(command: &str) -> Result<()> {
-    answered(cliclack::intro(crate::ui::bold(format!(
+    answered(cliclack::intro(crate::card::bold(format!(
         " stemma {command} "
     ))))
 }

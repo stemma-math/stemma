@@ -3,6 +3,7 @@ import Stemma.Genre
 import Stemma.Xref
 import Stemma.Bibliography
 import Stemma.Environment.Directive
+import StemmaDesign
 
 /-!
 # The library's site
@@ -54,16 +55,22 @@ block_extension Block.centralIndex where
           let title : Verso.Output.Html := match t.title with
             | some s => {{" (" {{Verso.Output.Html.text true s}} ")"}}
             | none => .empty
-          {{<tr>
-              <td><a href={{href}}>{{Verso.Output.Html.text true t.name}}</a>{{title}}</td>
-              <td>{{labelHtml label href}}</td>
-              <td><span class="stemma-signature" data-stemma-signature={{label}}></span></td>
-            </tr>}}
+          {{<div class="table__row" role="row">
+              <span role="cell"><a href={{href}}>{{Verso.Output.Html.text true t.name}}</a>{{title}}</span>
+              <span role="cell">{{labelHtml label href}}</span>
+              <span role="cell"><span class="stemma-signature" data-stemma-signature={{label}}></span></span>
+            </div>}}
         out := out.push {{
-          <table class="stemma-central-index">
-            <thead><tr><th>{{page}}</th><th>"Label"</th><th>"Signature"</th></tr></thead>
-            <tbody>{{rows}}</tbody>
-          </table>}}
+          <div class="stemma-central-index card">
+            <div class="table" role="table" aria-label={{page}}>
+              <div class="table__head" role="row">
+                <span role="columnheader">{{page}}</span>
+                <span role="columnheader">"Label"</span>
+                <span role="columnheader">"Signature"</span>
+              </div>
+              {{rows}}
+            </div>
+          </div>}}
       return .seq out
 
 /-- The page that lists the central environments. -/
@@ -82,6 +89,24 @@ def site (front : Part Manual) (documents : Array (Part Manual))
     (references : Array BibTeX.Entry) : Part Manual :=
   book front (documents ++ #[centralPart, bibliographyPart references])
 
+/-- Where the site keeps Stemma's design: its theme and the files the theme refers to. -/
+def designDirectory : String := "stemma-design"
+
+/--
+How the site looks: the Verso theme of `stemma-math/design`, linked from every page, with
+the files it refers to (faces, grain, glyphs and elements) copied beside it in Verso's data
+directory.
+-/
+def designConfig : IO RenderConfig := do
+  let files ← StemmaDesign.files.mapM fun (file : String) => do
+    let contents ← IO.FS.readBinFile (StemmaDesign.directory / file)
+    pure ({ filename := s!"{designDirectory}/{file}", contents } : DataFile)
+  let theme : CssFile :=
+    { filename := s!"{designDirectory}/verso-theme.css", contents := ⟨StemmaDesign.themeCss⟩ }
+  return {
+    extraCssFiles := {theme}, extraDataFiles := .ofArray files,
+    extraCss := {⟨stemmaCss⟩} }
+
 /--
 The site's program: reads `references.bib` from the library's directory, where
 `stemma preview` runs it, and builds the site with Verso. A malformed
@@ -95,6 +120,6 @@ def siteMain (args : List String) (front : Part Manual) (documents : Array (Part
     return 1
   | .ok references =>
     manualMain (site front documents references) (extensionImpls := extensionImpls)
-      (options := args)
+      (options := args) (config := ← designConfig)
 
 end Stemma

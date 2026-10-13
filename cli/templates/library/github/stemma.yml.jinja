@@ -7,9 +7,10 @@
 # - `Stemma check`: the build and every rule of the specification.
 #
 # Both read only the repository: nothing here depends on the forge's secrets.
-# Pull requests restore what main built (the dependencies, Mathlib among
-# them, and the library's own build), and only main saves it, so that pull
-# requests never evict main's caches.
+# Pull requests restore what main built (the dependencies and the library's
+# own build), and only main saves it, so that pull requests never evict
+# main's caches. Mathlib's build is not cached here: `lake exe cache get`
+# downloads it, and the runner's disk cannot hold it twice.
 name: Stemma
 
 on:
@@ -46,7 +47,32 @@ jobs:
   check:
     name: Stemma check
     runs-on: ubuntu-latest
+    env:
+      # The dependencies (Stemma's Lean package, Verso, Mathlib and theirs),
+      # checked out and built, but for Mathlib's own build. A listed directory
+      # is cached whole, so Mathlib's is listed entry by entry: its checkout,
+      # and the program and build of `lake exe cache`.
+      STEMMA_CACHE_DEPENDENCIES: |
+        .lake/packages/*
+        !.lake/packages/mathlib
+        .lake/packages/mathlib/*
+        !.lake/packages/mathlib/.lake
+        .lake/packages/mathlib/.lake/build/bin
+        .lake/packages/mathlib/.lake/build/ir/Cache
+        .lake/packages/mathlib/.lake/build/lib/lean/Cache
+      # The library's build, and the native code of the dependencies that the
+      # site's program links, which grows with what the library imports.
+      STEMMA_CACHE_BUILD: |
+        .lake/build
+        .lake/packages/*/.lake/build/ir/**/*.c.o.*
     steps:
+      # Mathlib leaves the runner's disk too full to write a cache's archive.
+      # The toolchains of Android, .NET and Haskell, which nothing here uses,
+      # are removed in the background while the job goes on.
+      - name: Make room on the disk
+        run: |
+          sudo nohup rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+            > /dev/null 2>&1 &
       - uses: actions/checkout@v5
         with:
           # `stemma check` reads the policy from main.
@@ -62,23 +88,22 @@ jobs:
           name="stemma-$version-x86_64-unknown-linux-musl"
           curl -sSfL "https://github.com/stemma-math/stemma/releases/download/v$version/$name.tar.gz" | tar xz
           echo "$PWD/$name" >> "$GITHUB_PATH"
-      # The dependencies (Stemma's Lean package, Verso, Mathlib and theirs),
-      # built, for exactly these versions.
+      # For exactly these versions of Lean and of the dependencies.
       - name: Restore the dependencies
         id: dependencies
         uses: actions/cache/restore@v5
         with:
-          path: .lake/packages
+          path: ${{ env.STEMMA_CACHE_DEPENDENCIES }}
           key: stemma-dependencies-${{ runner.os }}-${{ hashFiles('lean-toolchain', 'lake-manifest.json') }}
-      # The library's own build, from the latest run on main.
+      # From the latest run on main.
       - name: Restore the library's build
         uses: actions/cache/restore@v5
         with:
-          path: .lake/build
+          path: ${{ env.STEMMA_CACHE_BUILD }}
           key: stemma-build-${{ runner.os }}-${{ hashFiles('lean-toolchain', 'lake-manifest.json') }}-${{ github.sha }}
           restore-keys: stemma-build-${{ runner.os }}-${{ hashFiles('lean-toolchain', 'lake-manifest.json') }}-
+      # With the dependencies restored, this only downloads Mathlib's build.
       - name: Build the dependencies
-        if: steps.dependencies.outputs.cache-hit != 'true'
         run: |
           if grep -q 'name = "mathlib"' lakefile.toml; then
             lake exe cache get
@@ -89,25 +114,18 @@ jobs:
         if: steps.dependencies.outputs.cache-hit != 'true' && github.event_name == 'push'
         uses: actions/cache/save@v5
         with:
-          path: .lake/packages
+          path: ${{ env.STEMMA_CACHE_DEPENDENCIES }}
           key: ${{ steps.dependencies.outputs.cache-primary-key }}
       - name: Check
         run: stemma check
-      - name: Save the library's build
-        if: ${{ !cancelled() && github.event_name == 'push' }}
-        uses: actions/cache/save@v5
-        with:
-          path: .lake/build
-          key: stemma-build-${{ runner.os }}-${{ hashFiles('lean-toolchain', 'lake-manifest.json') }}-${{ github.sha }}
-      # The site: on pull requests, a downloadable artifact; it never fails
-      # the check.
+      # The site: on pull requests, a downloadable artifact. Main builds it
+      # too, so that its caches hold the native code the site links.
       - name: Build the site
         id: site
 {%- endraw %}
 {%- if publish %}
         continue-on-error: {% raw %}${{ github.event_name == 'pull_request' }}{% endraw %}
 {%- else %}
-        if: github.event_name == 'pull_request'
         continue-on-error: true
 {%- endif %}
 {%- raw %}
@@ -120,6 +138,12 @@ jobs:
         with:
           name: site
           path: _site
+      - name: Save the library's build
+        if: ${{ !cancelled() && github.event_name == 'push' }}
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ env.STEMMA_CACHE_BUILD }}
+          key: stemma-build-${{ runner.os }}-${{ hashFiles('lean-toolchain', 'lake-manifest.json') }}-${{ github.sha }}
 {%- endraw %}
 {%- if publish %}
 {%- raw %}
