@@ -151,7 +151,7 @@ block_extension Block.reference (entry : BibTeX.Entry) where
       pure {{
         <div class="stemma-reference" {{st.htmlId id}}>
           {{e.people}} " (" {{e.year}} "). " <em>{{title}}</em> {{venue}}
-          <span class="stemma-reference-key">{{e.key}}</span>
+          <span class="stemma-reference-key identifier">{{e.key}}</span>
           {{citedBy}}
         </div>
       }}

@@ -1,9 +1,12 @@
-//! The read-back page: one self-contained HTML file with an index, grouping
-//! by module, filters, and the person's marks and notes.
+//! The read-back page: one HTML file with an index, grouping by module,
+//! filters, and the person's marks and notes, drawn with stemma-math/design.
+
+use std::collections::BTreeMap;
 
 use anyhow::{Context, Result};
 use minijinja::Environment;
 use serde::Serialize;
+use stemma_design::bundle::{Bundle, Element, Faces, Subset};
 
 use super::reviews::{Mark, Reviews};
 use super::{Entry, State};
@@ -11,6 +14,46 @@ use super::{Entry, State};
 /// The page's template. Its name ends in `.html`, so that every value is
 /// escaped for HTML.
 const TEMPLATE: &str = include_str!("page.html");
+
+/// Where the server that serves the page serves stemma-math/design's files.
+pub(super) const DESIGN_PREFIX: &str = "/design";
+
+/// The elements the page uses.
+const ELEMENTS: [Element; 3] = [
+    Element::ThemeSwitch,
+    Element::FilterChips,
+    Element::ToastRegion,
+];
+
+/// The glyphs the page draws.
+const GLYPHS: [&str; 2] = ["info", "warning"];
+
+/// How the page takes stemma-math/design, for its `head`, and where each of
+/// its glyphs is: linked from the server's copy of the files, or, in the
+/// copy kept on disk, inlined, so that it holds together as one file. The
+/// copy keeps JuliaMono to its Latin files: whole, as it ships, it would
+/// make the copy megabytes; beyond them, the browser's own face stands in.
+fn design(served: bool) -> (String, BTreeMap<&'static str, String>) {
+    if served {
+        let head = format!(
+            "<link rel=\"stylesheet\" href=\"{DESIGN_PREFIX}/web/index.css\">\n\
+             <script type=\"module\" src=\"{DESIGN_PREFIX}/elements/index.js\"></script>\n"
+        );
+        let glyphs = GLYPHS
+            .map(|name| (name, stemma_design::glyph_href(DESIGN_PREFIX, name)))
+            .into();
+        (head, glyphs)
+    } else {
+        let bundle = Bundle::default()
+            .faces(&[Faces::Ui, Faces::Prose, Faces::Mono])
+            .subsets(&[Subset::Latin, Subset::LatinExt])
+            .face_subsets(Faces::Mono, &[Subset::Latin])
+            .weights(&[400, 500, 600, 700])
+            .elements(&ELEMENTS);
+        let glyphs = GLYPHS.map(|name| (name, bundle.glyph_href(name))).into();
+        (bundle.render(), glyphs)
+    }
+}
 
 /// What the page shows of one read-back.
 #[derive(Serialize)]
@@ -87,6 +130,7 @@ pub(super) fn render(
             }),
         }
     }
+    let (design_head, glyphs) = design(token.is_some());
     let mut env = Environment::new();
     env.add_template("page.html", TEMPLATE)?;
     env.get_template("page.html")?
@@ -94,6 +138,8 @@ pub(super) fn render(
             title => title,
             token => token,
             groups => groups,
+            design_head => design_head,
+            glyph => glyphs,
         })
         .context("rendering the read-back page")
 }

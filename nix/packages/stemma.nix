@@ -23,7 +23,13 @@ in
       ];
     };
 
-    cargoLock.lockFile = root + "/Cargo.lock";
+    cargoLock = {
+      lockFile = root + "/Cargo.lock";
+      # The design system's crates, from one tag of stemma-math/design.
+      outputHashes = {
+        "stemma-design-0.2.0" = "sha256-Sp5MHFLA47Mq3MeV8EM34gU/CvVAqnhv+tnNSfDYIPE=";
+      };
+    };
 
     # The integration tests make git repositories, and sign with SSH keys.
     nativeCheckInputs = [pkgs.git pkgs.openssh];
