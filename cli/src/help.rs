@@ -1,10 +1,11 @@
-//! How `stemma --help` looks: commands in sections, with one accent color.
+//! How `stemma --help` looks: commands in sections, in the styles of
+//! stemma-math/design.
 
 use std::fmt::Write;
 
 use clap::Command;
 use clap::builder::StyledStr;
-use clap::builder::styling::{AnsiColor, Effects, Styles};
+use stemma_design_terminal::themes::clap::styles;
 
 /// The commands, by what they are for, in the order the help shows them.
 pub const SECTIONS: &[(&str, &[&str])] = &[
@@ -17,19 +18,6 @@ pub const SECTIONS: &[(&str, &[&str])] = &[
     ("Share and sign", &["share", "sign", "key", "remote"]),
     ("Maintain", &["upgrade", "verify"]),
 ];
-
-/// The style of every help page: bold headings, command names in one accent
-/// color, placeholders dimmed. Colors follow the terminal and `NO_COLOR`.
-pub fn styles() -> Styles {
-    Styles::styled()
-        .header(Effects::BOLD.into())
-        .usage(Effects::BOLD.into())
-        .literal(AnsiColor::Cyan.on_default().effects(Effects::BOLD))
-        .placeholder(AnsiColor::BrightBlack.on_default())
-        .error(AnsiColor::Red.on_default().effects(Effects::BOLD))
-        .valid(AnsiColor::Green.on_default())
-        .invalid(AnsiColor::Yellow.on_default())
-}
 
 /// The template of the top-level help: a title, the usage, the commands in
 /// sections, and the options.

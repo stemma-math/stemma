@@ -1,68 +1,117 @@
 //! How `stemma` talks to people: one style for every command.
 //!
-//! Colors and symbols carry fixed meanings: green succeeded, red failed,
-//! yellow awaits something, dim is detail. Everything respects `NO_COLOR` and
-//! falls back to plain text when the output is not a terminal. Output for agents
-//! (`--json`) never goes through here.
+//! The roles, symbols and colour policy are stemma-math/design's
+//! (`stemma-design-terminal`): success succeeded, danger failed, warning
+//! awaits something, muted is detail. Colour follows `NO_COLOR`, whether the
+//! output is a terminal and `TERM=dumb`, which also asks for ASCII symbols.
+//! Output for agents (`--json`) never goes through here.
 
 use std::fmt::Display;
 use std::io::IsTerminal;
+use std::sync::OnceLock;
 use std::time::Duration;
 
-use indicatif::{ProgressBar, ProgressStyle};
-use owo_colors::{OwoColorize, Stream::Stdout};
+use indicatif::ProgressBar;
+use stemma_design_terminal::{Output, Role, Stream, Symbol, themes};
+
+/// The colour policy of standard output, decided once.
+pub fn out() -> Output {
+    static OUT: OnceLock<Output> = OnceLock::new();
+    *OUT.get_or_init(|| Output::detect(Stream::Stdout))
+}
+
+/// The colour policy of standard error, where cliclack, the spinners and
+/// errors write, decided once.
+pub fn err() -> Output {
+    static ERR: OnceLock<Output> = OnceLock::new();
+    *ERR.get_or_init(|| Output::detect(Stream::Stderr))
+}
+
+/// Makes the libraries that draw for `stemma` follow the colour policy and
+/// take the design's themes: clap's styles are set where the command is
+/// built, and these are cliclack's and console's.
+pub fn apply_themes() {
+    out().apply_to_console(Stream::Stdout);
+    err().apply_to_console(Stream::Stderr);
+    cliclack::set_theme(themes::cliclack::Theme::new(err()));
+}
+
+/// `text` in `role`, for `output`.
+pub fn paint(output: Output, role: Role, text: impl Display) -> String {
+    output.paint(role, &text.to_string()).to_string()
+}
+
+/// A symbol in `role`, for standard output.
+fn mark(symbol: Symbol, role: Role) -> String {
+    let out = out();
+    paint(out, role, out.symbol(symbol))
+}
 
 /// A headline, at the start of a command's output.
 pub fn heading(text: impl Display) {
-    println!("{}", text.if_supports_color(Stdout, |t| t.bold()));
+    println!("{}", paint(out(), Role::Strong, text));
 }
 
 /// Something that succeeded.
 pub fn success(text: impl Display) {
-    println!("{} {text}", "✓".if_supports_color(Stdout, |t| t.green()));
+    println!("{} {text}", mark(Symbol::Success, Role::Success));
 }
 
 /// Something that failed.
 pub fn error(text: impl Display) {
-    println!(
+    println!("{} {text}", mark(Symbol::Failure, Role::Danger));
+}
+
+/// Something that failed, on standard error: what stops a command.
+pub fn error_stderr(text: impl Display) {
+    let err = err();
+    eprintln!(
         "{} {text}",
-        "✗".if_supports_color(Stdout, |t| t.red().bold().to_string())
+        paint(err, Role::Danger, err.symbol(Symbol::Failure))
     );
 }
 
 /// Something that awaits an action.
 pub fn warning(text: impl Display) {
-    println!("{} {text}", "!".if_supports_color(Stdout, |t| t.yellow()));
+    println!("{} {text}", mark(Symbol::Warning, Role::Warning));
 }
 
 /// A detail, or what to do next.
 pub fn note(text: impl Display) {
     println!(
         "{} {}",
-        "→".if_supports_color(Stdout, |t| t.cyan()),
-        text.if_supports_color(Stdout, |t| t.dimmed())
+        mark(Symbol::ArrowRight, Role::Info),
+        paint(out(), Role::Muted, text)
     );
 }
 
-/// Dimmed text, for paths and details inside a line.
+/// Muted text, for paths and details inside a line.
 pub fn dim(text: impl Display) -> String {
-    text.if_supports_color(Stdout, |t| t.dimmed()).to_string()
+    paint(out(), Role::Muted, text)
 }
 
-/// Bold text, for names inside a line.
+/// Strong text, for names inside a line.
 pub fn bold(text: impl Display) -> String {
-    text.if_supports_color(Stdout, |t| t.bold()).to_string()
+    paint(out(), Role::Strong, text)
 }
 
-/// The color of a state, padded to `width` before coloring so that columns align.
+/// The role of a state: an environment's, or its signature's.
+fn state_role(state: &str) -> Option<Role> {
+    match state {
+        "proved" | "signed" => Some(Role::Success),
+        "pending" | "unsigned" => Some(Role::Warning),
+        "cited" => Some(Role::Info),
+        "not formalized" | "stale" => Some(Role::Danger),
+        _ => None,
+    }
+}
+
+/// A state in its role, padded to `width` before painting so that columns align.
 pub fn state(state: &str, width: usize) -> String {
     let padded = format!("{state:<width$}");
-    match state {
-        "proved" | "signed" => padded.if_supports_color(Stdout, |t| t.green()).to_string(),
-        "pending" | "unsigned" => padded.if_supports_color(Stdout, |t| t.yellow()).to_string(),
-        "cited" => padded.if_supports_color(Stdout, |t| t.cyan()).to_string(),
-        "not formalized" | "stale" => padded.if_supports_color(Stdout, |t| t.red()).to_string(),
-        _ => padded,
+    match state_role(state) {
+        Some(role) => paint(out(), role, padded),
+        None => padded,
     }
 }
 
@@ -75,11 +124,15 @@ impl Spinner {
         if json_output || !std::io::stderr().is_terminal() {
             return Self(None);
         }
+        let style = themes::indicatif::spinner(&err());
+        // Missing in stemma-math/design: a spinner preset that also shows the
+        // time elapsed. Until then, the preset's template with it added.
+        let style = style
+            .clone()
+            .template("{spinner:.blue} {msg} {elapsed:.dim}")
+            .unwrap_or(style);
         let bar = ProgressBar::new_spinner();
-        bar.set_style(
-            ProgressStyle::with_template("{spinner:.cyan} {msg} {elapsed:.dim}")
-                .unwrap_or_else(|_| ProgressStyle::default_spinner()),
-        );
+        bar.set_style(style);
         bar.set_message(message.into());
         bar.enable_steady_tick(Duration::from_millis(80));
         Self(Some(bar))
@@ -90,5 +143,20 @@ impl Spinner {
         if let Some(bar) = self.0 {
             bar.finish_and_clear();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn states_take_their_intents() {
+        assert_eq!(state_role("signed"), Some(Role::Success));
+        assert_eq!(state_role("unsigned"), Some(Role::Warning));
+        assert_eq!(state_role("cited"), Some(Role::Info));
+        assert_eq!(state_role("stale"), Some(Role::Danger));
+        assert_eq!(state_role("other"), None);
+        assert_eq!(paint(Output::plain(), Role::Danger, "stale"), "stale");
     }
 }

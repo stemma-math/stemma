@@ -208,7 +208,7 @@ pub fn init(options: Options, json_output: bool) -> Result<()> {
     let interactive = crate::interact::Mode::detect(json_output, options.yes).interactive();
     let ask = Asker { interactive };
     if interactive {
-        cliclack::intro(ui::bold(" stemma init "))?;
+        cliclack::intro(crate::card::bold(" stemma init "))?;
     }
 
     let dir = match options.dir {
