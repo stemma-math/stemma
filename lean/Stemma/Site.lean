@@ -92,10 +92,31 @@ def site (front : Part Manual) (documents : Array (Part Manual))
 /-- Where the site keeps Stemma's design: its theme and the files the theme refers to. -/
 def designDirectory : String := "stemma-design"
 
+/-- Where the theme's files are served from: Verso's data directory. Verso makes it relative to
+each page. -/
+def designUrl : String := s!"/-verso-data/{designDirectory}"
+
+/-- Where the appearance a reader chooses is kept, for every page. -/
+def themeKey : String := "stemma-theme"
+
+/-- Every page's head: the appearance a reader chose, applied before the page paints, and the
+module that defines design's elements. -/
+def designHead : Array Verso.Output.Html :=
+  let early := s!"try\{const t=localStorage.getItem('{themeKey}');" ++
+    "if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}"
+  #[.tag "script" #[] (.text false early),
+    .tag "script" #[("type", "module"), ("src", s!"{designUrl}/{StemmaDesign.elements}")]
+      (.text false "")]
+
+/-- Every page's own controls, at the foot of the table of contents: the appearance switch. -/
+def designContents : Array Verso.Output.Html :=
+  #[.tag "div" #[("class", "verso-toc-foot")]
+      (.tag "stemma-theme-switch" #[("storage-key", themeKey)] (.text false ""))]
+
 /--
 How the site looks: the Verso theme of `stemma-math/design`, linked from every page, with
 the files it refers to (faces, grain, glyphs and elements) copied beside it in Verso's data
-directory.
+directory, and an appearance switch on every page.
 -/
 def designConfig : IO RenderConfig := do
   let files ← StemmaDesign.files.mapM fun (file : String) => do
@@ -105,7 +126,7 @@ def designConfig : IO RenderConfig := do
     { filename := s!"{designDirectory}/verso-theme.css", contents := ⟨StemmaDesign.themeCss⟩ }
   return {
     extraCssFiles := {theme}, extraDataFiles := .ofArray files,
-    extraCss := {⟨stemmaCss⟩} }
+    extraCss := {⟨stemmaCss⟩}, extraHead := designHead, extraContents := designContents }
 
 /--
 The site's program: reads `references.bib` from the library's directory, where

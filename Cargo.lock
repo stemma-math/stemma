@@ -526,13 +526,13 @@ dependencies = [
 
 [[package]]
 name = "stemma-design"
-version = "0.2.0"
-source = "git+https://github.com/stemma-math/design?tag=v0.2.0#a59977ba3a491a0b3b96fe961205755ac0eceac5"
+version = "0.3.0"
+source = "git+https://github.com/stemma-math/design?tag=v0.3.0#4f1fc0ad6b45e4f5527e11507bc96f43ed071078"
 
 [[package]]
 name = "stemma-design-terminal"
-version = "0.2.0"
-source = "git+https://github.com/stemma-math/design?tag=v0.2.0#a59977ba3a491a0b3b96fe961205755ac0eceac5"
+version = "0.3.0"
+source = "git+https://github.com/stemma-math/design?tag=v0.3.0#4f1fc0ad6b45e4f5527e11507bc96f43ed071078"
 dependencies = [
  "clap",
  "cliclack",
