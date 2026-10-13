@@ -2181,6 +2181,117 @@ fn upgrade_moves_what_sources_kept_to_scratch_and_keeps_the_groups_ignores() {
     assert!(again["moved"].as_array().unwrap().is_empty(), "{again}");
 }
 
+#[test]
+fn init_on_forgejo_writes_its_workflow_and_names_the_instance() {
+    let dir = scratch("forgejo");
+    let out = stemma(
+        &dir,
+        &[
+            "init",
+            "lib",
+            "--no-git",
+            "--no-mathlib",
+            "--forge-url",
+            "https://codeberg.org/",
+            "--forge-runner",
+            "codeberg-small",
+        ],
+    );
+    assert!(out.status.success(), "{}", stderr(&out));
+    let lib = dir.join("lib");
+    let config = read(lib.join("stemma.toml"));
+    assert!(
+        config.contains(
+            "[forge]\nkind = \"forgejo\"\nurl = \"https://codeberg.org\"\nrunner = \"codeberg-small\"\n"
+        ),
+        "{config}"
+    );
+    assert!(config.contains("[site]\npublish = false\n"), "{config}");
+    assert!(!lib.join(".github").exists());
+    let workflow = read(lib.join(".forgejo/workflows/stemma.yml"));
+    let jobs = jobs(&workflow);
+    let names: Vec<_> = jobs.iter().map(|(n, _)| n.as_str()).collect();
+    assert_eq!(names, ["verify", "check"]);
+    for (_, job) in &jobs {
+        assert!(job.contains("runs-on: \"codeberg-small\""), "{job}");
+        assert!(!job.contains("uses: actions/"), "{job}");
+    }
+    assert!(workflow.contains("name: Stemma verify"));
+    assert!(workflow.contains("name: Stemma check"));
+    assert!(workflow.contains("uses: https://data.forgejo.org/actions/checkout@"));
+    assert!(!workflow.contains("deploy-pages"), "{workflow}");
+
+    // Forgejo needs its address, and has no Pages.
+    let out = stemma(&dir, &["init", "a", "--no-git", "--forge", "forgejo"]);
+    assert!(!out.status.success());
+    assert!(stderr(&out).contains("--forge-url"), "{}", stderr(&out));
+    let out = stemma(
+        &dir,
+        &[
+            "init",
+            "b",
+            "--no-git",
+            "--forge-url",
+            "https://codeberg.org",
+            "--publish-site",
+        ],
+    );
+    assert!(!out.status.success());
+    assert!(stderr(&out).contains("no Pages"), "{}", stderr(&out));
+}
+
+#[test]
+fn upgrade_moves_the_workflow_to_the_forge_the_library_names() {
+    let dir = scratch("forge-move");
+    let out = stemma(
+        &dir,
+        &["init", ".", "--name", "Alg", "--no-mathlib", "--commit"],
+    );
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(dir.join(".github/workflows/stemma.yml").is_file());
+    let config = read(dir.join("stemma.toml")).replace(
+        "[forge]\nkind = \"github\"\n",
+        "[forge]\nkind = \"forgejo\"\nurl = \"https://git.uni.edu\"\n",
+    );
+    std::fs::write(dir.join("stemma.toml"), config).unwrap();
+    git(
+        &dir,
+        &["commit", "--quiet", "-am", "Move to the university's forge"],
+    );
+
+    let out = stemma(&dir, &["upgrade", "--no-update", "--no-forge", "--json"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let result: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        result["removed"],
+        serde_json::json!([".github/workflows/stemma.yml"])
+    );
+    assert_eq!(result["committed"], true);
+    assert!(!dir.join(".github/workflows/stemma.yml").exists());
+    // The runner, when the library names none.
+    assert!(read(dir.join(".forgejo/workflows/stemma.yml")).contains("runs-on: \"docker\""));
+    assert_eq!(git(&dir, &["status", "--porcelain"]), "");
+
+    // Upgrading again changes nothing.
+    let out = stemma(&dir, &["upgrade", "--no-update", "--no-forge", "--json"]);
+    let again: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(again["changed"].as_array().unwrap().is_empty(), "{again}");
+    assert!(again["removed"].as_array().unwrap().is_empty(), "{again}");
+}
+
+#[test]
+fn a_change_of_the_forgejo_workflow_is_a_change_of_the_policy() {
+    let (dir, _, _) = library_of_alice("forgejo-policy");
+    git(&dir, &["switch", "--quiet", "--create", "change"]);
+    std::fs::create_dir_all(dir.join(".forgejo/workflows")).unwrap();
+    std::fs::write(dir.join(".forgejo/workflows/x.yml"), "on: push\n").unwrap();
+    git(&dir, &["add", "--all"]);
+    git(&dir, &["commit", "--quiet", "-m", "A workflow"]);
+    let v = verify(&dir);
+    assert_eq!(v["ok"], false, "{v}");
+    assert_eq!(v["missing"][0]["change"], "policy", "{v}");
+}
+
 /// The jobs of a workflow, by name, and their text.
 fn jobs(workflow: &str) -> Vec<(String, String)> {
     let body = &workflow[workflow.find("\njobs:\n").unwrap() + 7..];

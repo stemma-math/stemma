@@ -468,7 +468,7 @@ fn share_branch(library: &Library, options: &Options, mode: Mode, json: bool) ->
 
     // The pull requests: from the share branch, or, as earlier versions
     // opened them, from the working branch itself.
-    let forge = forge::current();
+    let forge = forge::current(dir);
     let pull_requests = match forge.pull_requests(dir, &[&share, &branch]) {
         Ok(prs) => prs,
         Err(error) => {

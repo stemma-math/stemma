@@ -113,7 +113,11 @@ pub fn kinds(dir: &Path, base: &str) -> Result<BTreeSet<String>> {
     let mut out = BTreeSet::new();
     let changed = git(dir, &["diff", "--name-only", &format!("{base}...HEAD")])?;
     for file in changed.lines() {
-        if file == "stemma.toml" || file.starts_with(".github/") {
+        if file == "stemma.toml"
+            || crate::forge::FORGE_DIRS
+                .iter()
+                .any(|d| file.starts_with(&format!("{d}/")))
+        {
             out.insert("policy".to_string());
         }
         if matches!(

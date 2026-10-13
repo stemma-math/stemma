@@ -35,7 +35,7 @@ one before acting.
 
 - **Never edit the files only `stemma` writes**: `stemma.toml`,
   `lakefile.toml`, `lake-manifest.json`, `lean-toolchain`, `.gitignore`,
-  `.github/`, and the block `stemma` keeps at the top of `AGENTS.md` (the rest
+  `.github/`, `.forgejo/`, and the block `stemma` keeps at the top of `AGENTS.md` (the rest
   of `AGENTS.md` is the group's own instructions: follow them). **Never touch
   `signatures/`.**
 - **Never sign or approve**: never run `stemma sign` or `stemma key`. Signing

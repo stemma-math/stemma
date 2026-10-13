@@ -91,6 +91,17 @@ enum Commands {
         /// member, in this format. By default, in a terminal, it asks.
         #[arg(long, value_enum)]
         scratch: Option<init::Scratch>,
+        /// The forge that will host the group's repository. By default
+        /// GitHub, or Forgejo when --forge-url is given.
+        #[arg(long = "forge", value_enum)]
+        forge_kind: Option<config::ForgeKind>,
+        /// The address of the Forgejo instance, such as https://codeberg.org.
+        #[arg(long)]
+        forge_url: Option<String>,
+        /// The label of the runners the Forgejo workflow runs on (by default
+        /// `docker`).
+        #[arg(long)]
+        forge_runner: Option<String>,
         /// Ask nothing: take every default.
         #[arg(long, short)]
         yes: bool,
@@ -357,6 +368,9 @@ fn main() -> ExitCode {
             no_forge,
             members,
             scratch,
+            forge_kind,
+            forge_url,
+            forge_runner,
             yes,
         } => init::init(
             init::Options {
@@ -374,6 +388,9 @@ fn main() -> ExitCode {
                 forge: no_forge.then_some(false),
                 members,
                 scratch,
+                forge_kind,
+                forge_url,
+                forge_runner,
                 yes,
             },
             cli.json,

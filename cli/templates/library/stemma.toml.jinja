@@ -15,6 +15,17 @@ stemma = "{{ version }}"
 require_signed_central = true
 
 # The library's site: whether the workflow publishes it to GitHub Pages, from
-# main. Pull requests carry it as an artifact either way.
+# main (GitHub only). Pull requests carry it as an artifact either way.
 [site]
 publish = {{ publish | tojson }}
+
+# The forge that hosts the group's repository: "github", or "forgejo", with
+# the address of its instance and the label of the runners its workflow runs on.
+[forge]
+{%- if forgejo %}
+kind = "forgejo"
+url = {{ forge_url | tojson }}
+runner = {{ runner | tojson }}
+{%- else %}
+kind = "github"
+{%- endif %}

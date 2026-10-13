@@ -700,8 +700,8 @@ pub fn choose(dir: &Path, request: &Request, mode: Mode) -> Result<Option<String
             "--here: the current branch is {here}, which nobody works on: pass --branch <name>"
         );
     }
-    let forge = forge::current();
-    let person = crate::agent::person();
+    let forge = forge::current(dir);
+    let person = crate::agent::person_on(forge.as_ref());
     let interactive = mode.interactive() && request.branch.is_none() && !request.here;
     if interactive {
         interact::intro("start")?;
