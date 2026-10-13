@@ -101,7 +101,7 @@ open Verso.Output.Html in
 /-- An environment's label, discreet, linked to its anchor, with a button that copies it. -/
 def labelHtml (label : String) (href : String) : Verso.Output.Html :=
   {{<span class="stemma-label">
-      <a href={{href}} title="The environment's label">{{label}}</a>
+      <a class="identifier" href={{href}} title="The environment's label">{{label}}</a>
       <button class="stemma-copy" type="button" data-label={{label}} title="Copy the label"></button>
     </span>}}
 
@@ -160,7 +160,8 @@ block_extension Block.environment (d : EnvData) where
           let central := if d.central then centralHtml label else .empty
           {{<span class="stemma-env-meta">{{central}}{{labelHtml label href}}</span>}}
         | none => .empty
-      let classes := s!"stemma-env stemma-{d.base}" ++ (if d.central then " stemma-central" else "")
+      let classes := s!"stemma-env stemma-{d.base}" ++
+        (if d.central then " stemma-central highlight highlight--accent" else "")
       let attrs : Array (String × String) := match d.label with
         | some label => #[("id", label), ("data-stemma-label", label)]
         | none => #[]
@@ -178,7 +179,7 @@ block_extension Block.formalization where
     open Verso.Output.Html in
     some fun _ goB _ _ content => do
       pure {{
-        <details class="stemma-formalization">
+        <details class="stemma-formalization disclosure">
           <summary>"Lean"</summary>
           {{← content.mapM goB}}
         </details>

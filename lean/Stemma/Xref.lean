@@ -140,6 +140,7 @@ document.addEventListener("DOMContentLoaded", () => {
     unsigned: "Unsigned: central, and not signed yet.",
     stale: "Stale: it changed since it was signed.",
   };
+  const intents = { signed: "success", unsigned: "warning", stale: "danger" };
   fetch("stemma-state.json")
     .then((response) => (response.ok ? response.json() : null))
     .then((state) => {
@@ -149,7 +150,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!(value in said)) continue;
         mark.textContent = value;
         mark.title = said[value];
-        mark.classList.add("stemma-state-" + value);
+        mark.classList.add("chip", "chip--" + intents[value], "stemma-state-" + value);
       }
     })
     .catch(() => {});
@@ -157,72 +158,81 @@ document.addEventListener("DOMContentLoaded", () => {
 "#
 
 /--
-The style of what Stemma adds to the site. Colours derive from the text's, or
-are mid-tones readable on light and dark backgrounds alike.
+The style of what Stemma adds to the site: its layout only. Colours, faces and sizes are the
+tokens of `stemma-math/design`, whose theme every page loads (`Stemma.designConfig`), and
+what can be a component of it is one, chosen in the HTML: a central environment is a
+`.highlight`, a signature state a `.chip` in an intent, the formalization a `.disclosure`
+and the index of central environments a `.table` in a `.card`.
 -/
 def stemmaCss : String := r#"
-:root {
-  --stemma-muted: color-mix(in srgb, currentColor 55%, transparent);
-  --stemma-faint: color-mix(in srgb, currentColor 18%, transparent);
-  --stemma-accent: #3f7fbf;
-  --stemma-signed: #2e9d5b;
-  --stemma-unsigned: #b7841a;
-  --stemma-stale: #d1493f;
-}
-.stemma-env { margin: 1.2em 0; position: relative; }
-.stemma-env-heading { margin-bottom: 0.3em; }
+.stemma-env { margin: var(--space-5) 0; position: relative; }
+.stemma-env-heading { margin-bottom: var(--space-1); }
 .stemma-statement > p, .stemma-statement > ul, .stemma-statement > ol { font-style: italic; }
 .stemma-statement > .stemma-env-heading { font-style: normal; }
 .stemma-proof > p:last-of-type::after { content: "∎"; float: right; }
-.stemma-proof-of a { color: inherit; text-decoration: underline dotted; text-underline-offset: 0.15em; }
-.stemma-proof-of a:hover { text-decoration-style: solid; }
-.stemma-formalization { margin-top: 0.5em; border-left: 3px solid var(--stemma-faint); padding-left: 0.8em; }
-.stemma-formalization > summary { cursor: pointer; font-size: 0.85em; color: var(--stemma-muted); }
-.stemma-env:target { outline: 2px solid var(--stemma-faint); outline-offset: 0.4em; border-radius: 2px; }
+.stemma-env:target { outline: 2px solid var(--focus-ring); outline-offset: var(--space-2);
+  border-radius: var(--radius-xs); }
+.stemma-formalization { margin-top: var(--space-2); --disclosure-inset: 0; }
+.stemma-formalization > summary { font: var(--text-small); color: var(--ink-3); }
 
-/* Labels: small, beside the heading, clearer on hover. */
-.stemma-env-meta { float: right; margin-left: 0.8em; font-size: 0.75em; font-style: normal;
-  display: inline-flex; align-items: center; gap: 0.45em; }
-.stemma-label { font-family: var(--verso-code-font-family, monospace); color: var(--stemma-muted);
-  opacity: 0.55; transition: opacity 0.15s; display: inline-flex; align-items: center; gap: 0.2em; }
+/* References to environments and entries, in the link's colour, underlined when hovered. */
+.stemma-proof-of a, .stemma-cite a, .stemma-cited a { color: var(--link); text-decoration: none; }
+.stemma-proof-of a:hover, .stemma-cite a:hover, .stemma-cited a:hover { text-decoration: underline; }
+
+/* Labels: beside the heading, clearer on hover. */
+.stemma-env-meta { float: right; margin-left: var(--space-3); font: var(--text-label);
+  display: inline-flex; align-items: center; gap: var(--space-2); }
+.stemma-label { color: var(--ink-3); opacity: 0.6; transition: opacity var(--dur-ui) var(--ease-out);
+  display: inline-flex; align-items: center; gap: var(--space-1); }
 .stemma-env:hover .stemma-label, .stemma-label:focus-within { opacity: 1; }
 .stemma-label a { color: inherit; text-decoration: none; }
 .stemma-label a:hover { text-decoration: underline; }
+/* Missing in stemma-math/design: a copy button as small as the text around it, without the
+   elements, which the site does not load. Until then, a quiet text button drawn here. */
 button.stemma-copy { font: inherit; color: inherit; background: none; border: 1px solid transparent;
-  border-radius: 3px; padding: 0 0.25em; cursor: pointer; line-height: 1.3; }
-button.stemma-copy:hover { border-color: var(--stemma-faint); }
+  border-radius: var(--radius-xs); padding: 0 var(--space-1); cursor: pointer; }
+button.stemma-copy:hover { border-color: var(--border-strong); color: var(--ink-1); }
 button.stemma-copy::after { content: "copy"; }
 button.stemma-copy.stemma-copied::after { content: "copied"; }
 
-/* Central environments: a thin rule in the margin, a mark, and their signature state. */
-.stemma-central::before { content: ""; position: absolute; left: -0.9em; top: 0.15em; bottom: 0.15em;
-  width: 3px; border-radius: 2px; background: var(--stemma-accent); opacity: 0.8; }
-.stemma-central-mark { color: var(--stemma-accent); font-size: 0.9em; cursor: help; }
+/* Central environments: a highlight in the accent, a mark, and their signature state. */
+.stemma-central-mark { color: var(--accent-text); cursor: help; }
 .stemma-signature:empty { display: none; }
-.stemma-signature { border: 1px solid currentColor; border-radius: 0.7em; padding: 0 0.5em;
-  font-size: 0.95em; line-height: 1.4; cursor: help; }
-.stemma-state-signed { color: var(--stemma-signed); background: color-mix(in srgb, var(--stemma-signed) 12%, transparent); }
-.stemma-state-unsigned { color: var(--stemma-unsigned); background: color-mix(in srgb, var(--stemma-unsigned) 12%, transparent); }
-.stemma-state-stale { color: var(--stemma-stale); background: color-mix(in srgb, var(--stemma-stale) 12%, transparent); }
+.stemma-signature { cursor: help; }
 
 /* Citations and the bibliography. */
-.stemma-cite a, .stemma-cited a { color: inherit; text-decoration: underline dotted; text-underline-offset: 0.15em; }
-.stemma-cite a:hover, .stemma-cited a:hover { text-decoration-style: solid; }
-.stemma-cited { font-style: normal; color: var(--stemma-muted); }
-.stemma-reference { margin: 0.9em 0; padding-left: 1.5em; text-indent: -1.5em; }
-.stemma-reference:target { background: color-mix(in srgb, var(--stemma-accent) 12%, transparent); }
-.stemma-reference-key { font-family: var(--verso-code-font-family, monospace); font-size: 0.8em;
-  color: var(--stemma-muted); margin-left: 0.5em; }
-.stemma-cited-by { text-indent: 0; font-size: 0.9em; color: var(--stemma-muted); margin-top: 0.15em; }
+.stemma-cited { font-style: normal; color: var(--ink-3); }
+.stemma-reference { margin: var(--space-4) 0; padding-left: var(--space-6); text-indent: calc(-1 * var(--space-6)); }
+.stemma-reference:target { background: color-mix(in srgb, var(--accent) var(--mix-soft), transparent);
+  border-radius: var(--radius-xs); }
+.stemma-reference-key { color: var(--ink-3); margin-left: var(--space-2); }
+.stemma-cited-by { text-indent: 0; font: var(--text-meta); color: var(--ink-3); margin-top: var(--space-1); }
 .stemma-cited-by a { color: inherit; }
 
-/* The index of central environments. */
-table.stemma-central-index { border-collapse: collapse; width: 100%; margin: 0.5em 0 1.5em; }
-table.stemma-central-index td, table.stemma-central-index th { text-align: left; padding: 0.3em 0.6em 0.3em 0;
-  border-bottom: 1px solid var(--stemma-faint); vertical-align: baseline; }
-table.stemma-central-index th { font-weight: 600; font-size: 0.85em; color: var(--stemma-muted); }
-table.stemma-central-index .stemma-label { opacity: 1; }
-table.stemma-central-index .stemma-signature { font-size: 0.75em; }
+/* The index of central environments: one card for each page. */
+.stemma-central-index { margin: var(--space-3) 0 var(--space-6); }
+.stemma-central-index .table { --columns: minmax(0, 3fr) minmax(0, 2fr) minmax(0, 1fr); }
+.stemma-central-index [role="cell"]:first-child a { color: var(--link); }
+.stemma-central-index .stemma-label { opacity: 1; }
+"#
+
+/--
+Missing in stemma-math/design: the Verso theme leaves some colours of the manual genre's own
+stylesheet (`book.css`, Verso v4.34.0) as Verso writes them, for a light page: the header, the
+table of contents' links and the buttons to the previous and next pages. Until the theme maps
+them, they take the tokens here, so that the dark appearance holds together.
+-/
+def versoStopgapCss : String := r#"
+header { background: var(--surface-page); }
+.header-title, .prev-next-buttons > * { color: var(--ink-1); }
+#toc a { color: var(--ink-2); }
+#toc a:hover { color: var(--ink-1); }
+#toc .split-toc label.toggle-split-toc::before { background-color: var(--ink-1); }
+html:root {
+  --verso-burger-toc-visible-shadow-color: var(--surface-page);
+  --verso-burger-toc-hidden-color: var(--ink-1);
+  --verso-burger-toc-hidden-shadow-color: var(--surface-page);
+}
 "#
 
 end Stemma
