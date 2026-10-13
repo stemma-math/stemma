@@ -551,9 +551,27 @@ dependencies = [
  "owo-colors",
  "serde",
  "serde_json",
+ "stemma-design",
+ "stemma-design-terminal",
  "textwrap",
  "toml",
  "toml_edit",
+]
+
+[[package]]
+name = "stemma-design"
+version = "0.1.1"
+source = "git+https://github.com/stemma-math/design?tag=v0.1.1#dafad473daf3c7f527f70a6f7cee1e6ad747ce2f"
+
+[[package]]
+name = "stemma-design-terminal"
+version = "0.1.1"
+source = "git+https://github.com/stemma-math/design?tag=v0.1.1#dafad473daf3c7f527f70a6f7cee1e6ad747ce2f"
+dependencies = [
+ "clap",
+ "cliclack",
+ "console",
+ "indicatif",
 ]
 
 [[package]]
