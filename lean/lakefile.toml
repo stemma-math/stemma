@@ -1,5 +1,5 @@
 name = "stemma"
-version = "0.5.0"
+version = "0.5.1"
 defaultTargets = ["Stemma"]
 
 [[require]]
@@ -10,7 +10,7 @@ rev = "v4.34.0"
 [[require]]
 name = "StemmaDesign"
 git = "https://github.com/stemma-math/design"
-rev = "v0.2.0"
+rev = "v0.3.1"
 subDir = "targets/verso"
 
 [[lean_lib]]
