@@ -147,8 +147,6 @@ h1 { font: var(--text-display); margin: var(--space-1) 0 var(--space-2); }
   gap: var(--space-2) var(--space-4);
   align-items: start;
 }
-/* Missing in stemma-math/design: how a segmented control's options look disabled. */
-.marks > button:disabled { color: var(--ink-disabled); cursor: not-allowed; }
 .note { display: grid; gap: var(--space-2); }
 .note textarea { resize: vertical; }
 .note-row { display: flex; gap: var(--space-3); align-items: center; flex-wrap: wrap; font: var(--text-meta); color: var(--ink-3); }
@@ -197,7 +195,7 @@ stemma-toast-region {
   </div>
   <stemma-theme-switch label="Theme" label-system="Auto" storage-key="stemma-readbacks-theme"></stemma-theme-switch>
 </header>
-{% if not token %}<div class="banner"><p class="message message--info"><svg class="glyph" aria-hidden="true"><use href="{{ glyphs }}#info"/></svg><span class="message__text">This copy only shows the read-backs. To mark them, write notes or archive them, open the page that <code class="identifier">stemma readback</code> serves.</span></p></div>
+{% if not token %}<div class="banner"><p class="message message--info"><svg class="glyph" aria-hidden="true"><use href="{{ glyph.info }}"/></svg><span class="message__text">This copy only shows the read-backs. To mark them, write notes or archive them, open the page that <code class="identifier">stemma readback</code> serves.</span></p></div>
 {% endif %}<div class="toolbar">
   <div class="toolbar-inner">
     <stemma-filter-chips class="filters" label="Show" single>
@@ -230,8 +228,8 @@ stemma-toast-region {
           <h3><a href="#{{ r.label }}">{{ r.display }}<code class="identifier">{{ r.label }}</code></a></h3>
           <div class="badges"></div>
         </header>
-        {% if r.gone %}<p class="warn message message--warning"><svg class="glyph" aria-hidden="true"><use href="{{ glyphs }}#warning"/></svg><span class="message__text">This environment is no longer in the library, or has no Lean: the read-back is of Lean that is gone.</span></p>
-        {% elif r.stale %}<p class="warn message message--warning"><svg class="glyph" aria-hidden="true"><use href="{{ glyphs }}#warning"/></svg><span class="message__text">The Lean of this environment has changed since this read-back was made. Make it again with <code class="identifier">stemma readback {{ r.label }}</code>.</span></p>
+        {% if r.gone %}<p class="warn message message--warning"><svg class="glyph" aria-hidden="true"><use href="{{ glyph.warning }}"/></svg><span class="message__text">This environment is no longer in the library, or has no Lean: the read-back is of Lean that is gone.</span></p>
+        {% elif r.stale %}<p class="warn message message--warning"><svg class="glyph" aria-hidden="true"><use href="{{ glyph.warning }}"/></svg><span class="message__text">The Lean of this environment has changed since this read-back was made. Make it again with <code class="identifier">stemma readback {{ r.label }}</code>.</span></p>
         {% endif %}<div class="cols">
           <div class="col source document">
             <h4 class="label">The prose</h4>

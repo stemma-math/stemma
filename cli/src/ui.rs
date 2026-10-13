@@ -124,13 +124,7 @@ impl Spinner {
         if json_output || !std::io::stderr().is_terminal() {
             return Self(None);
         }
-        let style = themes::indicatif::spinner(&err());
-        // Missing in stemma-math/design: a spinner preset that also shows the
-        // time elapsed. Until then, the preset's template with it added.
-        let style = style
-            .clone()
-            .template("{spinner:.blue} {msg} {elapsed:.dim}")
-            .unwrap_or(style);
+        let style = themes::indicatif::timed_spinner(&err());
         let bar = ProgressBar::new_spinner();
         bar.set_style(style);
         bar.set_message(message.into());

@@ -187,11 +187,7 @@ def stemmaCss : String := r#"
 .stemma-env:hover .stemma-label, .stemma-label:focus-within { opacity: 1; }
 .stemma-label a { color: inherit; text-decoration: none; }
 .stemma-label a:hover { text-decoration: underline; }
-/* Missing in stemma-math/design: a copy button as small as the text around it, without the
-   elements, which the site does not load. Until then, a quiet text button drawn here. */
-button.stemma-copy { font: inherit; color: inherit; background: none; border: 1px solid transparent;
-  border-radius: var(--radius-xs); padding: 0 var(--space-1); cursor: pointer; }
-button.stemma-copy:hover { border-color: var(--border-strong); color: var(--ink-1); }
+/* The copy button is design's inline button; what it says is the site's. */
 button.stemma-copy::after { content: "copy"; }
 button.stemma-copy.stemma-copied::after { content: "copied"; }
 
@@ -214,25 +210,6 @@ button.stemma-copy.stemma-copied::after { content: "copied"; }
 .stemma-central-index .table { --columns: minmax(0, 3fr) minmax(0, 2fr) minmax(0, 1fr); }
 .stemma-central-index [role="cell"]:first-child a { color: var(--link); }
 .stemma-central-index .stemma-label { opacity: 1; }
-"#
-
-/--
-Missing in stemma-math/design: the Verso theme leaves some colours of the manual genre's own
-stylesheet (`book.css`, Verso v4.34.0) as Verso writes them, for a light page: the header, the
-table of contents' links and the buttons to the previous and next pages. Until the theme maps
-them, they take the tokens here, so that the dark appearance holds together.
--/
-def versoStopgapCss : String := r#"
-header { background: var(--surface-page); }
-.header-title, .prev-next-buttons > * { color: var(--ink-1); }
-#toc a { color: var(--ink-2); }
-#toc a:hover { color: var(--ink-1); }
-#toc .split-toc label.toggle-split-toc::before { background-color: var(--ink-1); }
-html:root {
-  --verso-burger-toc-visible-shadow-color: var(--surface-page);
-  --verso-burger-toc-hidden-color: var(--ink-1);
-  --verso-burger-toc-hidden-shadow-color: var(--surface-page);
-}
 "#
 
 end Stemma

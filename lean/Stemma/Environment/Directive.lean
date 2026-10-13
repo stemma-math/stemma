@@ -102,7 +102,7 @@ open Verso.Output.Html in
 def labelHtml (label : String) (href : String) : Verso.Output.Html :=
   {{<span class="stemma-label">
       <a class="identifier" href={{href}} title="The environment's label">{{label}}</a>
-      <button class="stemma-copy" type="button" data-label={{label}} title="Copy the label"></button>
+      <button class="stemma-copy button button--inline" type="button" data-label={{label}} title="Copy the label"></button>
     </span>}}
 
 open Verso.Output.Html in

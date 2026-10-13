@@ -10,7 +10,7 @@ rev = "v4.34.0"
 [[require]]
 name = "StemmaDesign"
 git = "https://github.com/stemma-math/design"
-rev = "v0.1.1"
+rev = "v0.2.0"
 subDir = "targets/verso"
 
 [[lean_lib]]

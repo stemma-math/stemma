@@ -94,7 +94,8 @@ def designDirectory : String := "stemma-design"
 
 /--
 How the site looks: the Verso theme of `stemma-math/design`, linked from every page, with
-its faces and grain copied beside it in Verso's data directory.
+the files it refers to (faces, grain, glyphs and elements) copied beside it in Verso's data
+directory.
 -/
 def designConfig : IO RenderConfig := do
   let files ← StemmaDesign.files.mapM fun (file : String) => do
@@ -104,7 +105,7 @@ def designConfig : IO RenderConfig := do
     { filename := s!"{designDirectory}/verso-theme.css", contents := ⟨StemmaDesign.themeCss⟩ }
   return {
     extraCssFiles := {theme}, extraDataFiles := .ofArray files,
-    extraCss := {⟨stemmaCss⟩, ⟨versoStopgapCss⟩} }
+    extraCss := {⟨stemmaCss⟩} }
 
 /--
 The site's program: reads `references.bib` from the library's directory, where
