@@ -6,204 +6,57 @@
 <meta name="color-scheme" content="light dark">
 {% if token %}<meta name="stemma-token" content="{{ token }}">
 {% endif %}<title>Read-backs · {{ title }}</title>
-<style>
-:root {
-  --bg: #f7f6f2;
-  --surface: #ffffff;
-  --sunken: #f1efe9;
-  --ink: #1f2024;
-  --muted: #64656c;
-  --faint: #8d8e95;
-  --line: #e2dfd7;
-  --line-strong: #cfcbc1;
-  --accent: #2c5b8f;
-  --accent-soft: #e6eef8;
-  --read: #2c5b8f;
-  --approved: #23784a;
-  --approved-soft: #e3f3ea;
-  --stale: #9a5b00;
-  --stale-soft: #fcf1df;
-  --new: #6a3fa0;
-  --new-soft: #f0e9f9;
-  --danger: #b3261e;
-  --focus: #2c5b8f;
-  --shadow: 0 1px 2px rgba(30, 28, 20, .05), 0 1px 1px rgba(30, 28, 20, .03);
-  --serif: Charter, "Bitstream Charter", "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
-  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
-  color-scheme: light;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg: #131417;
-    --surface: #1b1d21;
-    --sunken: #16181b;
-    --ink: #e7e5df;
-    --muted: #a1a1a8;
-    --faint: #7c7d85;
-    --line: #2b2e34;
-    --line-strong: #3a3e46;
-    --accent: #8db6ea;
-    --accent-soft: #1d2a3a;
-    --read: #8db6ea;
-    --approved: #6fcb97;
-    --approved-soft: #17291f;
-    --stale: #e5a54a;
-    --stale-soft: #2c2317;
-    --new: #c3a3f0;
-    --new-soft: #261d33;
-    --danger: #f28b82;
-    --focus: #8db6ea;
-    --shadow: none;
-    color-scheme: dark;
-  }
-}
-:root[data-theme="dark"] {
-  --bg: #131417;
-  --surface: #1b1d21;
-  --sunken: #16181b;
-  --ink: #e7e5df;
-  --muted: #a1a1a8;
-  --faint: #7c7d85;
-  --line: #2b2e34;
-  --line-strong: #3a3e46;
-  --accent: #8db6ea;
-  --accent-soft: #1d2a3a;
-  --read: #8db6ea;
-  --approved: #6fcb97;
-  --approved-soft: #17291f;
-  --stale: #e5a54a;
-  --stale-soft: #2c2317;
-  --new: #c3a3f0;
-  --new-soft: #261d33;
-  --danger: #f28b82;
-  --focus: #8db6ea;
-  --shadow: none;
-  color-scheme: dark;
-}
-* { box-sizing: border-box; }
+{{ design_head | safe }}<style>
+/* The page's layout. How it looks is stemma-math/design's: its tokens and components. */
 html { scroll-padding-top: 5.5rem; }
-body {
-  margin: 0;
-  background: var(--bg);
-  color: var(--ink);
-  font: 15px/1.5 var(--sans);
-  -webkit-font-smoothing: antialiased;
-}
-a { color: var(--accent); }
-code, pre { font-family: var(--mono); font-size: .86em; }
-button, input, textarea { font: inherit; color: inherit; }
-:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 [hidden] { display: none !important; }
 
 .top {
   max-width: 92rem;
   margin: 0 auto;
-  padding: 2rem 1.5rem 1rem;
+  padding: var(--space-8) var(--space-6) var(--space-4);
   display: flex;
-  gap: 1rem 2rem;
+  gap: var(--space-4) var(--space-8);
   align-items: flex-end;
   justify-content: space-between;
   flex-wrap: wrap;
 }
-.kicker {
-  font-size: .78rem;
-  letter-spacing: .08em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-h1 {
-  font: 600 1.9rem/1.2 var(--serif);
-  margin: .2rem 0 .4rem;
-}
-.lede { margin: 0; max-width: 46rem; color: var(--muted); }
-.theme {
-  display: inline-flex;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 2px;
-  background: var(--surface);
-}
-.theme button {
-  border: 0;
-  background: none;
-  padding: .2rem .7rem;
-  border-radius: 999px;
-  font-size: .8rem;
-  color: var(--muted);
-  cursor: pointer;
-}
-.theme button[aria-pressed="true"] { background: var(--sunken); color: var(--ink); }
+h1 { font: var(--text-display); margin: var(--space-1) 0 var(--space-2); }
+.lede { margin: 0; max-width: 46rem; color: var(--ink-2); }
 
 .banner {
   max-width: 92rem;
-  margin: 0 auto .5rem;
-  padding: 0 1.5rem;
-}
-.banner p {
-  margin: 0;
-  padding: .6rem .9rem;
-  border-radius: 8px;
-  background: var(--sunken);
-  border: 1px solid var(--line);
-  color: var(--muted);
-  font-size: .9rem;
+  margin: 0 auto var(--space-2);
+  padding: 0 var(--space-6);
 }
 
 .toolbar {
   position: sticky;
   top: 0;
   z-index: 5;
-  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  background: color-mix(in srgb, var(--surface-page) 92%, transparent);
   backdrop-filter: blur(6px);
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--divider);
 }
 .toolbar-inner {
   max-width: 92rem;
   margin: 0 auto;
-  padding: .7rem 1.5rem;
+  padding: var(--space-3) var(--space-6);
   display: flex;
-  gap: .6rem 1rem;
+  gap: var(--space-2) var(--space-4);
   align-items: center;
   flex-wrap: wrap;
 }
-.filters { display: flex; gap: .35rem; flex-wrap: wrap; }
-.chip {
-  border: 1px solid var(--line-strong);
-  background: var(--surface);
-  border-radius: 999px;
-  padding: .25rem .75rem;
-  font-size: .86rem;
-  cursor: pointer;
-  display: inline-flex;
-  gap: .45rem;
-  align-items: center;
-}
-.chip .n { color: var(--muted); font-variant-numeric: tabular-nums; }
-.chip[aria-pressed="true"] {
-  background: var(--ink);
-  border-color: var(--ink);
-  color: var(--bg);
-}
-.chip[aria-pressed="true"] .n { color: inherit; opacity: .75; }
-.search {
-  margin-left: auto;
-  min-width: 14rem;
-  flex: 0 1 20rem;
-  border: 1px solid var(--line-strong);
-  background: var(--surface);
-  border-radius: 8px;
-  padding: .3rem .7rem;
-  font-size: .9rem;
-}
+.filters { display: flex; gap: var(--space-1); flex-wrap: wrap; }
+.search { margin-left: auto; min-width: 14rem; flex: 0 1 20rem; width: auto; }
 
 .layout {
   max-width: 92rem;
   margin: 0 auto;
-  padding: 1.25rem 1.5rem 4rem;
+  padding: var(--space-5) var(--space-6) var(--space-16);
   display: grid;
   grid-template-columns: minmax(13rem, 17rem) minmax(0, 1fr);
-  gap: 2rem;
+  gap: var(--space-8);
   align-items: start;
 }
 .index {
@@ -211,268 +64,125 @@ h1 {
   top: 4.25rem;
   max-height: calc(100vh - 5.5rem);
   overflow: auto;
-  font-size: .88rem;
-  padding-right: .25rem;
+  font: var(--text-meta);
+  padding-right: var(--space-1);
 }
-.index h2 {
-  font-size: .75rem;
-  letter-spacing: .08em;
-  text-transform: uppercase;
-  color: var(--muted);
-  margin: 0 0 .6rem;
-  font-weight: 600;
-}
-.index details { margin-bottom: .6rem; }
+.index > .label { margin-bottom: var(--space-2); }
+.index details { margin-bottom: var(--space-2); }
 .index summary {
   cursor: pointer;
-  color: var(--muted);
-  font-weight: 600;
-  padding: .15rem 0;
+  font: var(--text-small);
+  color: var(--ink-2);
+  padding: var(--space-1) 0;
   overflow-wrap: anywhere;
 }
-.index ol { list-style: none; margin: .2rem 0 0; padding: 0 0 0 .2rem; }
+.index ol { list-style: none; margin: var(--space-1) 0 0; padding: 0 0 0 var(--space-1); }
 .index li a {
   display: flex;
-  gap: .5rem;
+  gap: var(--space-2);
   align-items: center;
-  padding: .18rem .4rem;
-  border-radius: 6px;
-  color: var(--ink);
+  padding: 3px var(--space-2);
+  border-radius: var(--radius-xs);
+  color: var(--ink-1);
   text-decoration: none;
 }
-.index li a:hover { background: var(--sunken); }
-.index li.here a { background: var(--accent-soft); }
-.index .lbl { font-family: var(--mono); font-size: .82rem; overflow-wrap: anywhere; flex: 1; }
-.index .tag { font-size: .7rem; font-weight: 600; }
-.index .tag.stale { color: var(--stale); }
-.index .tag.new { color: var(--new); }
-.index li[data-state="archived"] .lbl { color: var(--faint); }
-.index .none { color: var(--muted); }
+.index li a:hover { background: var(--fill-muted); }
+.index li.here a { background: color-mix(in srgb, var(--accent) var(--mix-soft), transparent); }
+.index .identifier { flex: 1; }
+.index li[data-state="archived"] .identifier { color: var(--ink-3); }
 
+/* The person's mark, at a glance: read in the accent, approved in success. */
 .dot {
-  width: .62rem;
-  height: .62rem;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
-  border: 1.5px solid var(--faint);
+  border: 1.5px solid var(--ink-4);
   flex: none;
 }
-[data-effective="read"] .dot { background: var(--read); border-color: var(--read); }
-[data-effective="approved"] .dot { background: var(--approved); border-color: var(--approved); }
+[data-effective="read"] .dot { background: var(--accent); border-color: var(--accent); }
+[data-effective="approved"] .dot { background: var(--success); border-color: var(--success); }
 
-.module + .module { margin-top: 2.5rem; }
+.module + .module { margin-top: var(--space-11); }
 .module-name {
-  font: 600 .8rem/1.3 var(--mono);
-  color: var(--muted);
-  margin: 0 0 .8rem;
-  padding-bottom: .4rem;
-  border-bottom: 1px solid var(--line);
-  overflow-wrap: anywhere;
+  margin: 0 0 var(--space-3);
+  padding-bottom: var(--space-2);
+  color: var(--ink-3);
+  border-bottom: 1px solid var(--divider);
 }
-.rb {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  box-shadow: var(--shadow);
-  margin-bottom: 1.25rem;
-  overflow: hidden;
-}
-.rb:target { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.rb { margin-bottom: var(--space-5); overflow: hidden; }
+.rb:target { border-color: var(--accent); box-shadow: var(--ring-selected); }
 .rb-head {
   display: flex;
-  gap: .5rem 1rem;
+  gap: var(--space-2) var(--space-4);
   align-items: baseline;
   justify-content: space-between;
   flex-wrap: wrap;
-  padding: .9rem 1.2rem .6rem;
+  padding: var(--space-4) var(--space-5) var(--space-3);
 }
-.rb-head h3 { margin: 0; font: 600 1.15rem/1.3 var(--serif); }
-.rb-head h3 a { text-decoration: none; }
-.rb-head h3 code {
-  font-size: .78rem;
-  font-weight: 500;
-  color: var(--muted);
-  margin-left: .4rem;
-  padding: .1rem .4rem;
-  border-radius: 5px;
-  background: var(--sunken);
-}
-.rb-head h3 a:hover code { color: var(--accent); }
-.badges { display: flex; gap: .35rem; flex-wrap: wrap; }
-.badge {
-  font-size: .74rem;
-  font-weight: 600;
-  border-radius: 999px;
-  padding: .08rem .55rem;
-  border: 1px solid transparent;
-  white-space: nowrap;
-}
-.badge.new { color: var(--new); background: var(--new-soft); }
-.badge.stale { color: var(--stale); background: var(--stale-soft); }
-.badge.archived { color: var(--muted); background: var(--sunken); border-color: var(--line); }
-.badge.read { color: var(--read); background: var(--accent-soft); }
-.badge.approved { color: var(--approved); background: var(--approved-soft); }
-.badge.outdated { color: var(--stale); border-color: var(--stale); background: none; }
-.warn {
-  margin: 0 1.2rem .6rem;
-  padding: .5rem .75rem;
-  border-radius: 8px;
-  background: var(--stale-soft);
-  color: var(--stale);
-  font-size: .88rem;
-}
+.rb-head h3 { margin: 0; font: var(--text-heading); }
+.rb-head h3 a { color: var(--ink-1); text-decoration: none; }
+.rb-head h3 .identifier { margin-left: var(--space-2); color: var(--ink-3); }
+.rb-head h3 a:hover .identifier { color: var(--accent-text); }
+.badges { display: flex; gap: var(--space-1); flex-wrap: wrap; }
+.warn { margin: 0 var(--space-5) var(--space-3); }
 .cols {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--divider);
 }
-.col { padding: .9rem 1.2rem 1rem; min-width: 0; }
-.col + .col { border-left: 1px solid var(--line); }
-.col.readback { background: var(--sunken); }
-.col h4 {
-  margin: 0 0 .4rem;
-  font-size: .72rem;
-  letter-spacing: .08em;
-  text-transform: uppercase;
-  color: var(--muted);
-  font-weight: 600;
-}
-.col h4 .by { text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--faint); }
-.text {
-  font: 1.02rem/1.6 var(--serif);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  margin: 0 0 .9rem;
-}
-.lean-box { margin-top: .4rem; }
-.lean-box summary {
-  cursor: pointer;
-  font-size: .72rem;
-  letter-spacing: .08em;
-  text-transform: uppercase;
-  color: var(--muted);
-  font-weight: 600;
-  margin-bottom: .4rem;
-}
-pre.lean {
-  margin: 0;
-  padding: .7rem .85rem;
-  background: var(--sunken);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  overflow-x: auto;
-  line-height: 1.45;
-  tab-size: 2;
-}
+.col { padding: var(--space-4) var(--space-5); min-width: 0; }
+.col + .col { border-left: 1px solid var(--divider); }
+.col.readback { background: var(--surface-subtle); }
+.col > .label { margin: 0 0 var(--space-2); }
+.col > .label .quiet { font-weight: 400; }
+.text { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0 0 var(--space-4); }
+.lean-box { margin-top: var(--space-2); }
+.lean-box > summary { cursor: pointer; margin-bottom: var(--space-2); }
+.lean-box pre { margin: 0; tab-size: 2; }
 .review {
-  border-top: 1px solid var(--line);
-  padding: .8rem 1.2rem .9rem;
+  border-top: 1px solid var(--divider);
+  padding: var(--space-3) var(--space-5) var(--space-4);
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: .6rem 1rem;
+  gap: var(--space-2) var(--space-4);
   align-items: start;
 }
-.marks {
-  display: inline-flex;
-  border: 1px solid var(--line-strong);
-  border-radius: 8px;
-  overflow: hidden;
-}
-.marks button {
-  border: 0;
-  background: var(--surface);
-  padding: .32rem .75rem;
-  font-size: .86rem;
-  cursor: pointer;
-}
-.marks button + button { border-left: 1px solid var(--line-strong); }
-.marks button[aria-checked="true"][data-value="unread"] { background: var(--sunken); font-weight: 600; }
-.marks button[aria-checked="true"][data-value="read"] { background: var(--accent-soft); color: var(--read); font-weight: 600; }
-.marks button[aria-checked="true"][data-value="approved"] { background: var(--approved-soft); color: var(--approved); font-weight: 600; }
-.note { display: grid; gap: .35rem; }
-.note textarea {
-  width: 100%;
-  min-height: 2.4rem;
-  resize: vertical;
-  border: 1px solid var(--line-strong);
-  background: var(--surface);
-  border-radius: 8px;
-  padding: .4rem .6rem;
-  font-size: .9rem;
-  line-height: 1.4;
-}
-.note-row { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; font-size: .8rem; color: var(--muted); }
-.hint { color: var(--stale); }
-.status.error { color: var(--danger); }
-.btn {
-  border: 1px solid var(--line-strong);
-  background: var(--surface);
-  border-radius: 8px;
-  padding: .28rem .7rem;
-  font-size: .84rem;
-  cursor: pointer;
-}
-.btn.primary { background: var(--ink); border-color: var(--ink); color: var(--bg); }
-.btn:disabled, .marks button:disabled, textarea:disabled { opacity: .55; cursor: default; }
-.empty {
-  padding: 3rem 1rem;
-  text-align: center;
-  color: var(--muted);
-  border: 1px dashed var(--line-strong);
-  border-radius: 12px;
-}
-.toast {
+/* Missing in stemma-math/design: how a segmented control's options look disabled. */
+.marks > button:disabled { color: var(--ink-disabled); cursor: not-allowed; }
+.note { display: grid; gap: var(--space-2); }
+.note textarea { resize: vertical; }
+.note-row { display: flex; gap: var(--space-3); align-items: center; flex-wrap: wrap; font: var(--text-meta); color: var(--ink-3); }
+.hint { color: var(--warning-text); }
+.status.error { color: var(--danger-text); }
+main > .empty { padding: var(--space-12) var(--space-4); text-align: center; }
+stemma-toast-region {
   position: fixed;
   left: 50%;
-  bottom: 1.5rem;
+  bottom: var(--space-6);
   transform: translateX(-50%);
-  background: var(--ink);
-  color: var(--bg);
-  padding: .55rem .6rem .55rem 1rem;
-  border-radius: 10px;
-  display: flex;
-  gap: .8rem;
-  align-items: center;
-  font-size: .9rem;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, .25);
   z-index: 10;
-}
-.toast button {
-  border: 1px solid color-mix(in srgb, var(--bg) 40%, transparent);
-  background: none;
-  color: inherit;
-  border-radius: 6px;
-  padding: .15rem .6rem;
-  cursor: pointer;
-}
-kbd {
-  font-family: var(--mono);
-  font-size: .75rem;
-  border: 1px solid var(--line-strong);
-  border-bottom-width: 2px;
-  border-radius: 4px;
-  padding: 0 .3rem;
 }
 
 @media (max-width: 960px) {
-  .layout { grid-template-columns: minmax(0, 1fr); gap: 1rem; }
+  .layout { grid-template-columns: minmax(0, 1fr); gap: var(--space-4); }
   .index {
     position: static;
     max-height: none;
-    background: var(--surface);
-    border: 1px solid var(--line);
-    border-radius: 12px;
-    padding: .8rem 1rem;
+    background: var(--surface-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xl);
+    padding: var(--space-3) var(--space-4);
   }
   .search { margin-left: 0; flex: 1 1 12rem; min-width: 0; }
 }
 @media (max-width: 720px) {
-  .top, .toolbar-inner, .layout, .banner { padding-left: 1rem; padding-right: 1rem; }
+  .top, .toolbar-inner, .layout, .banner { padding-left: var(--space-4); padding-right: var(--space-4); }
   .cols { grid-template-columns: minmax(0, 1fr); }
-  .col + .col { border-left: 0; border-top: 1px solid var(--line); }
+  .col + .col { border-left: 0; border-top: 1px solid var(--divider); }
   .review { grid-template-columns: minmax(0, 1fr); }
 }
 @media print {
-  .toolbar, .index, .review, .theme, .banner { display: none !important; }
+  .toolbar, .index, .review, stemma-theme-switch, .banner { display: none !important; }
   .layout { display: block; }
   .rb { break-inside: avoid; box-shadow: none; }
 }
@@ -481,110 +191,94 @@ kbd {
 <body>
 <header class="top">
   <div>
-    <div class="kicker">Read-backs</div>
+    <p class="label">Read-backs</p>
     <h1>{{ title }}</h1>
     <p class="lede">Each read-back is the Lean of an environment translated into prose by an agent that never saw the prose. Read them side by side: where they disagree, the Lean may not say what the prose claims.</p>
   </div>
-  <div class="theme" role="group" aria-label="Theme">
-    <button type="button" data-theme-choice="auto" aria-pressed="true">Auto</button>
-    <button type="button" data-theme-choice="light" aria-pressed="false">Light</button>
-    <button type="button" data-theme-choice="dark" aria-pressed="false">Dark</button>
-  </div>
+  <stemma-theme-switch label="Theme" label-system="Auto" storage-key="stemma-readbacks-theme"></stemma-theme-switch>
 </header>
-{% if not token %}<div class="banner"><p>This copy only shows the read-backs. To mark them, write notes or archive them, open the page that <code>stemma readback</code> serves.</p></div>
+{% if not token %}<div class="banner"><p class="message message--info"><svg class="glyph" aria-hidden="true"><use href="{{ glyphs }}#info"/></svg><span class="message__text">This copy only shows the read-backs. To mark them, write notes or archive them, open the page that <code class="identifier">stemma readback</code> serves.</span></p></div>
 {% endif %}<div class="toolbar">
   <div class="toolbar-inner">
-    <div class="filters" role="group" aria-label="Show">
-      <button type="button" class="chip" data-filter="all" aria-pressed="true">All <span class="n"></span></button>
-      <button type="button" class="chip" data-filter="unread" aria-pressed="false">Unread <span class="n"></span></button>
-      <button type="button" class="chip" data-filter="approved" aria-pressed="false">Approved <span class="n"></span></button>
-      <button type="button" class="chip" data-filter="stale" aria-pressed="false">Stale <span class="n"></span></button>
-      <button type="button" class="chip" data-filter="archived" aria-pressed="false">Archived <span class="n"></span></button>
-    </div>
-    <input class="search" type="search" placeholder="Filter by label or module  ( / )" aria-label="Filter by label or module">
+    <stemma-filter-chips class="filters" label="Show" single>
+      <button type="button" class="chip" value="all" aria-pressed="true">All <span class="count"></span></button>
+      <button type="button" class="chip" value="unread" aria-pressed="false">Unread <span class="count"></span></button>
+      <button type="button" class="chip chip--success" value="approved" aria-pressed="false">Approved <span class="count"></span></button>
+      <button type="button" class="chip chip--warning" value="stale" aria-pressed="false">Stale <span class="count"></span></button>
+      <button type="button" class="chip" value="archived" aria-pressed="false">Archived <span class="count"></span></button>
+    </stemma-filter-chips>
+    <input class="input search" type="search" placeholder="Filter by label or module  ( / )" aria-label="Filter by label or module">
   </div>
 </div>
 <div class="layout">
   <nav class="index" aria-label="Index">
-    <h2>Index</h2>
+    <h2 class="label">Index</h2>
     {% for g in groups %}<details open data-group="{{ g.module }}">
       <summary>{{ g.module }}</summary>
       <ol>
-        {% for r in g.items %}<li data-for="{{ r.label }}" data-state="{{ r.state }}"><a href="#{{ r.label }}"><span class="dot" aria-hidden="true"></span><span class="lbl">{{ r.label }}</span><span class="tag"></span></a></li>
+        {% for r in g.items %}<li data-for="{{ r.label }}" data-state="{{ r.state }}"><a href="#{{ r.label }}"><span class="dot" aria-hidden="true"></span><span class="identifier">{{ r.label }}</span><span class="tag" hidden></span></a></li>
         {% endfor %}</ol>
     </details>
-    {% else %}<p class="none">No read-backs yet.</p>
+    {% else %}<p class="empty">No read-backs yet.</p>
     {% endfor %}
   </nav>
   <main>
     {% for g in groups %}<section class="module" data-group="{{ g.module }}" aria-label="{{ g.module }}">
-      <h2 class="module-name">{{ g.module }}</h2>
-      {% for r in g.items %}<article class="rb" id="{{ r.label }}" data-state="{{ r.state }}" data-mark="{{ r.mark }}" data-outdated="{{ "true" if r.outdated else "false" }}" data-gone="{{ "true" if r.gone else "false" }}" data-search="{{ r.search }}">
+      <h2 class="module-name identifier">{{ g.module }}</h2>
+      {% for r in g.items %}<article class="rb card" id="{{ r.label }}" data-state="{{ r.state }}" data-mark="{{ r.mark }}" data-outdated="{{ "true" if r.outdated else "false" }}" data-gone="{{ "true" if r.gone else "false" }}" data-search="{{ r.search }}">
         <header class="rb-head">
-          <h3><a href="#{{ r.label }}">{{ r.display }}<code>{{ r.label }}</code></a></h3>
+          <h3><a href="#{{ r.label }}">{{ r.display }}<code class="identifier">{{ r.label }}</code></a></h3>
           <div class="badges"></div>
         </header>
-        {% if r.gone %}<p class="warn">This environment is no longer in the library, or has no Lean: the read-back is of Lean that is gone.</p>
-        {% elif r.stale %}<p class="warn">The Lean of this environment has changed since this read-back was made. Make it again with <code>stemma readback {{ r.label }}</code>.</p>
+        {% if r.gone %}<p class="warn message message--warning"><svg class="glyph" aria-hidden="true"><use href="{{ glyphs }}#warning"/></svg><span class="message__text">This environment is no longer in the library, or has no Lean: the read-back is of Lean that is gone.</span></p>
+        {% elif r.stale %}<p class="warn message message--warning"><svg class="glyph" aria-hidden="true"><use href="{{ glyphs }}#warning"/></svg><span class="message__text">The Lean of this environment has changed since this read-back was made. Make it again with <code class="identifier">stemma readback {{ r.label }}</code>.</span></p>
         {% endif %}<div class="cols">
-          <div class="col source">
-            <h4>The prose</h4>
+          <div class="col source document">
+            <h4 class="label">The prose</h4>
             <div class="text">{{ r.prose }}</div>
             <details class="lean-box" open>
-              <summary>{% if r.stale %}The Lean it was made from{% else %}The Lean{% endif %}</summary>
-              <pre class="lean"><code>{{ r.lean }}</code></pre>
+              <summary class="label">{% if r.stale %}The Lean it was made from{% else %}The Lean{% endif %}</summary>
+              <pre><code>{{ r.lean }}</code></pre>
             </details>
           </div>
-          <div class="col readback">
-            <h4>The read-back <span class="by">by {{ r.agent }}, from the Lean alone</span></h4>
+          <div class="col readback document">
+            <h4 class="label">The read-back <span class="quiet">by {{ r.agent }}, from the Lean alone</span></h4>
             <div class="text">{{ r.readback }}</div>
           </div>
         </div>
         <footer class="review">
-          <div class="marks" role="radiogroup" aria-label="Mark">
-            <button type="button" role="radio" data-value="unread" aria-checked="false">Unread</button>
-            <button type="button" role="radio" data-value="read" aria-checked="false">Read</button>
-            <button type="button" role="radio" data-value="approved" aria-checked="false">Approved</button>
+          <div class="marks segmented" role="group" aria-label="Mark">
+            <button type="button" data-value="unread" aria-pressed="false">Unread</button>
+            <button type="button" data-value="read" aria-pressed="false">Read</button>
+            <button type="button" data-value="approved" aria-pressed="false">Approved</button>
           </div>
           <div class="note">
-            <textarea rows="1" maxlength="2000" placeholder="A note for yourself. The agent reads notes only when you ask it to." aria-label="Note on {{ r.label }}">{{ r.note }}</textarea>
+            <textarea class="input" rows="1" maxlength="2000" placeholder="A note for yourself. The agent reads notes only when you ask it to." aria-label="Note on {{ r.label }}">{{ r.note }}</textarea>
             <div class="note-row">
-              <button type="button" class="btn primary save" disabled>Save note</button>
+              <button type="button" class="button button--primary button--small save" disabled>Save note</button>
               <span class="hint" hidden></span>
               <span class="status" aria-live="polite"></span>
             </div>
           </div>
-          <button type="button" class="btn archive">Archive</button>
+          <button type="button" class="button button--small archive">Archive</button>
         </footer>
       </article>
       {% endfor %}</section>
-    {% endfor %}<p class="empty" hidden>No read-backs match.</p>
+    {% endfor %}<p class="empty card card--empty" hidden>No read-backs match.</p>
   </main>
 </div>
-<div class="toast" role="status" hidden><span class="toast-text"></span><button type="button" class="toast-undo">Undo</button></div>
+<stemma-toast-region label="Notifications"></stemma-toast-region>
 <script>
 (() => {
   "use strict";
-  const root = document.documentElement;
-  // The theme: the system's, unless the person chose one.
-  const themeButtons = [...document.querySelectorAll("[data-theme-choice]")];
-  function setTheme(choice) {
-    if (choice === "auto") root.removeAttribute("data-theme");
-    else root.setAttribute("data-theme", choice);
-    for (const b of themeButtons) b.setAttribute("aria-pressed", String(b.dataset.themeChoice === choice));
-    try { localStorage.setItem("stemma-readbacks-theme", choice); } catch (_) {}
-  }
-  let savedTheme = "auto";
-  try { savedTheme = localStorage.getItem("stemma-readbacks-theme") || "auto"; } catch (_) {}
-  setTheme(savedTheme);
-  for (const b of themeButtons) b.addEventListener("click", () => setTheme(b.dataset.themeChoice));
-
+  // The theme is <stemma-theme-switch>'s: the system's, unless the person chose one.
   const tokenMeta = document.querySelector('meta[name="stemma-token"]');
   const token = tokenMeta ? tokenMeta.content : "";
   const live = token !== "" && location.protocol === "http:";
   const articles = [...document.querySelectorAll("article.rb")];
   const entries = new Map([...document.querySelectorAll(".index li[data-for]")].map(li => [li.dataset.for, li]));
-  const chips = [...document.querySelectorAll(".chip")];
+  const filters = document.querySelector(".filters");
+  const chips = [...filters.querySelectorAll("button.chip")];
   const search = document.querySelector(".search");
   const empty = document.querySelector(".empty");
   let filter = "all";
@@ -599,10 +293,12 @@ kbd {
     archived: a => a.dataset.state === "archived",
   };
   const words = { new: "New", stale: "Stale", archived: "Archived", read: "Read", approved: "Approved" };
+  // Each state and mark in an intent, or the violet tone for what is new.
+  const tones = { new: "violet", stale: "warning", archived: "neutral", read: "accent", approved: "success" };
 
-  function badge(kind, text) {
+  function badge(kind, text, outline) {
     const span = document.createElement("span");
-    span.className = "badge " + kind;
+    span.className = "chip chip--" + tones[kind] + (outline ? " chip--outline" : "");
     span.textContent = text;
     return span;
   }
@@ -613,10 +309,10 @@ kbd {
     const badges = a.querySelector(".badges");
     badges.replaceChildren();
     if (state !== "current") badges.append(badge(state, words[state]));
-    if (outdated && mark !== "unread") badges.append(badge("outdated", words[mark] + " earlier"));
+    if (outdated && mark !== "unread") badges.append(badge("stale", words[mark] + " earlier", true));
     else if (mark !== "unread") badges.append(badge(mark, words[mark]));
     for (const b of a.querySelectorAll(".marks button")) {
-      b.setAttribute("aria-checked", String(b.dataset.value === effective(a)));
+      b.setAttribute("aria-pressed", String(b.dataset.value === effective(a)));
     }
     const hint = a.querySelector(".hint");
     hint.hidden = !outdated;
@@ -629,8 +325,10 @@ kbd {
       li.dataset.state = state;
       li.dataset.effective = effective(a);
       const tag = li.querySelector(".tag");
-      tag.className = "tag " + (state === "stale" || state === "new" ? state : "");
-      tag.textContent = state === "stale" ? "stale" : state === "new" ? "new" : "";
+      const tagged = state === "stale" || state === "new";
+      tag.className = "tag" + (tagged ? " chip chip--" + tones[state] : "");
+      tag.textContent = tagged ? state : "";
+      tag.hidden = !tagged;
     }
   }
 
@@ -649,8 +347,8 @@ kbd {
       g.hidden = [...items].every(i => i.hidden);
     }
     for (const c of chips) {
-      c.setAttribute("aria-pressed", String(c.dataset.filter === filter));
-      c.querySelector(".n").textContent = articles.filter(shown[c.dataset.filter]).length;
+      c.setAttribute("aria-pressed", String(c.value === filter));
+      c.querySelector(".count").textContent = articles.filter(shown[c.value]).length;
     }
     empty.hidden = visible > 0 || articles.length === 0;
     if (articles.length === 0) {
@@ -660,7 +358,11 @@ kbd {
   }
 
   function setFilter(f) { filter = f; apply(); }
-  for (const c of chips) c.addEventListener("click", () => setFilter(c.dataset.filter));
+  // One filter at a time: choosing the one already chosen keeps it.
+  filters.addEventListener("change", () => {
+    const on = chips.find(c => c.getAttribute("aria-pressed") === "true");
+    setFilter(on ? on.value : filter);
+  });
   search.addEventListener("input", () => { query = search.value.trim().toLowerCase(); apply(); });
   document.addEventListener("keydown", e => {
     if (e.key === "/" && document.activeElement.tagName !== "TEXTAREA" && document.activeElement !== search) {
@@ -684,20 +386,12 @@ kbd {
   }
   window.addEventListener("hashchange", reveal);
 
-  const toast = document.querySelector(".toast");
-  let toastTimer = null, undo = null;
+  const toasts = document.querySelector("stemma-toast-region");
+  let toast = null;
   function notify(text, action) {
-    toast.querySelector(".toast-text").textContent = text;
-    undo = action;
-    toast.querySelector(".toast-undo").hidden = !action;
-    toast.hidden = false;
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { toast.hidden = true; }, 6000);
+    if (toast) toast.close();
+    toast = toasts.show({ text, life: 6000, action: action && { label: "Undo", onClick: action } });
   }
-  toast.querySelector(".toast-undo").addEventListener("click", () => {
-    toast.hidden = true;
-    if (undo) undo();
-  });
 
   // Writes a change through the local server, and shows what it recorded.
   async function send(a, change) {

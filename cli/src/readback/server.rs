@@ -17,6 +17,7 @@ use serde_json::json;
 
 use super::reviews::{Change, Reviews};
 use super::{Entry, page};
+use page::DESIGN_PREFIX;
 
 /// The header that carries the session's token.
 const TOKEN_HEADER: &str = "x-stemma-token";
@@ -88,9 +89,9 @@ impl Response {
             stream,
             "HTTP/1.1 {} {reason}\r\nContent-Type: {}\r\nContent-Length: {}\r\n\
 Cache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\n\
-X-Frame-Options: DENY\r\nContent-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; \
-script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'; \
-frame-ancestors 'none'\r\nConnection: close\r\n\r\n",
+X-Frame-Options: DENY\r\nContent-Security-Policy: default-src 'none'; style-src 'self' 'unsafe-inline'; \
+script-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'; \
+base-uri 'none'; form-action 'none'; frame-ancestors 'none'\r\nConnection: close\r\n\r\n",
             self.status,
             self.content_type,
             self.body.len()
@@ -229,6 +230,14 @@ impl Server {
             ("GET", "/" | "/index.html") => self.page(),
             ("POST", "/api/review") => self.review(request),
             (_, "/" | "/index.html" | "/api/review") => Response::error(405, "method not allowed"),
+            ("GET", path) => match stemma_design::serve(DESIGN_PREFIX, path) {
+                Some(asset) => Response {
+                    status: 200,
+                    content_type: asset.content_type,
+                    body: asset.bytes.to_vec(),
+                },
+                None => Response::error(404, "not found"),
+            },
             _ => Response::error(404, "not found"),
         }
     }
@@ -356,6 +365,24 @@ mod tests {
         assert_eq!(r.status, 403);
         assert_eq!(s.answer(&request("GET", "/", &[], "")).status, 403);
         let r = s.answer(&request("GET", "/even-add.json", &[HOST], ""));
+        assert_eq!(r.status, 404);
+    }
+
+    #[test]
+    fn serves_the_design_the_page_links() {
+        let dir = library("design");
+        let s = server(&dir);
+        let html = String::from_utf8(s.answer(&request("GET", "/", &[HOST], "")).body).unwrap();
+        for path in ["/design/web/index.css", "/design/elements/index.js"] {
+            assert!(html.contains(path), "{path}");
+            let r = s.answer(&request("GET", path, &[HOST], ""));
+            assert_eq!(r.status, 200, "{path}");
+        }
+        let r = s.answer(&request("GET", "/design/web/fonts.css", &[HOST], ""));
+        assert_eq!(r.content_type, "text/css; charset=utf-8");
+        let r = s.answer(&request("GET", "/design/../reviews.json", &[HOST], ""));
+        assert_eq!(r.status, 404);
+        let r = s.answer(&request("POST", "/design/web/index.css", &[HOST], ""));
         assert_eq!(r.status, 404);
     }
 
