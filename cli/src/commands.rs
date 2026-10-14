@@ -19,7 +19,7 @@ pub const LEAN_TOOLCHAIN: &str = include_str!("../../lean/lean-toolchain");
 pub const DEFAULT_BASE: &str = "origin/main";
 
 /// Where Stemma's Lean package is published.
-pub const STEMMA_GIT: &str = "https://github.com/stemma-math/stemma";
+pub const STEMMA_GIT: &str = "https://github.com/stemma-math/stemma-signum";
 
 /// The library's references, which documents cite.
 pub const REFERENCES: &str = "references.bib";

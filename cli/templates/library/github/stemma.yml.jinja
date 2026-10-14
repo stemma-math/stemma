@@ -39,7 +39,7 @@ jobs:
         run: |
           version=$(sed -n 's/^stemma = "\(.*\)"$/\1/p' stemma.toml)
           name="stemma-$version-x86_64-unknown-linux-musl"
-          curl -sSfL "https://github.com/stemma-math/stemma/releases/download/v$version/$name.tar.gz" | tar xz
+          curl -sSfL "https://github.com/stemma-math/stemma-signum/releases/download/v$version/$name.tar.gz" | tar xz
           echo "$PWD/$name" >> "$GITHUB_PATH"
       - name: Verify
         run: stemma verify --no-build
@@ -86,7 +86,7 @@ jobs:
         run: |
           version=$(sed -n 's/^stemma = "\(.*\)"$/\1/p' stemma.toml)
           name="stemma-$version-x86_64-unknown-linux-musl"
-          curl -sSfL "https://github.com/stemma-math/stemma/releases/download/v$version/$name.tar.gz" | tar xz
+          curl -sSfL "https://github.com/stemma-math/stemma-signum/releases/download/v$version/$name.tar.gz" | tar xz
           echo "$PWD/$name" >> "$GITHUB_PATH"
       # For exactly these versions of Lean and of the dependencies.
       - name: Restore the dependencies
