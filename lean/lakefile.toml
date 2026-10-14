@@ -1,5 +1,5 @@
 name = "stemma"
-version = "0.5.1"
+version = "0.5.2"
 defaultTargets = ["Stemma"]
 
 [[require]]
